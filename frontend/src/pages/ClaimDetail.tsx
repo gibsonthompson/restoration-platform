@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Plus, Pencil } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Plus, Pencil, Share2, FileText, StickyNote, Globe } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import type { Claim, Structure } from '../types/models';
 
-// Mirrors the claim detail (structures list) screen.
+// Claim detail = structures list + the Edit/Share/Documents/General Notes action
+// row (mirrors the live app). Bottom nav switches to claim-context here.
 export default function ClaimDetail() {
   const { claimId } = useParams();
   const { activeOrg } = useOrg();
+  const nav = useNavigate();
   const [claim, setClaim] = useState<Claim | null>(null);
   const [structures, setStructures] = useState<Structure[]>([]);
 
@@ -34,15 +36,29 @@ export default function ClaimDetail() {
 
   if (!claim) return <div className="p-4 text-gray-400">Loading...</div>;
 
+  const Action = ({ icon: Icon, label, to }: { icon: any; label: string; to: string }) => (
+    <button onClick={() => nav(to)} className="flex-1 flex flex-col items-center gap-1 py-2 text-xs text-gray-200">
+      <Icon size={20} /> {label}
+    </button>
+  );
+
   return (
     <div>
       <div className="bg-brand-dark text-white p-4">
-        <div className="text-xl font-bold">{claim.policyholder_name}</div>
-        <div className="text-sm opacity-80">{claim.address}</div>
-        <div className="text-sm opacity-60">{claim.type_of_loss ?? 'Type of loss not set'}</div>
-        <Link to={`/claims/${claim.id}/edit`} className="inline-flex items-center gap-1 text-sm mt-2 opacity-90">
-          <Pencil size={14} /> Edit
-        </Link>
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-xl font-bold">{claim.policyholder_name ?? 'Unnamed'}</div>
+            <div className="text-sm opacity-80">{claim.address}</div>
+            <div className="text-sm opacity-60 capitalize">{claim.type_of_loss ?? 'Type of loss not set'}</div>
+          </div>
+          <Globe size={18} className="opacity-70 mt-1" />
+        </div>
+        <div className="flex mt-3 border-t border-white/10 pt-1">
+          <Action icon={Pencil} label="Edit" to={`/claims/${claim.id}/edit`} />
+          <Action icon={Share2} label="Share" to={`/claims/${claim.id}/share`} />
+          <Action icon={FileText} label="Documents" to={`/claims/${claim.id}/documents`} />
+          <Action icon={StickyNote} label="Notes" to={`/claims/${claim.id}/notes`} />
+        </div>
       </div>
 
       <div className="p-4 space-y-3">
@@ -51,7 +67,7 @@ export default function ClaimDetail() {
           <Plus size={16} /> Add Structure
         </button>
         {structures.map(s => (
-          <Link key={s.id} to={`/structures/${s.id}`}
+          <Link key={s.id} to={`/claims/${claim.id}/structures/${s.id}`}
                 className="block bg-white rounded border p-4 hover:bg-gray-50 font-medium">
             {s.name}
           </Link>

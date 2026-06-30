@@ -1,7 +1,7 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useOrg } from '../context/OrgContext';
-import { Layout } from './Layout';
+import { AppLayout } from './AppLayout';
 import CreateOrg from '../pages/CreateOrg';
 
 export function ProtectedRoute() {
@@ -10,8 +10,7 @@ export function ProtectedRoute() {
 
   if (loading || orgLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
   if (!session) return <Navigate to="/login" replace />;
-  // Signed in but no org yet -> force org creation (covers the chicken-and-egg).
   if (!activeOrg) return <CreateOrg />;
 
-  return <Layout><Outlet /></Layout>;
+  return <AppLayout><Outlet /></AppLayout>;
 }
