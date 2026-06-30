@@ -14,6 +14,7 @@ import Share from './pages/Share';
 import Search from './pages/Search';
 import Notifications from './pages/Notifications';
 import OrgSettings from './pages/settings/OrgSettings';
+import HydroPage from './features/hydro/HydroPage';
 
 // Routes are nested to mirror the real IA: claim -> structure -> room. The claim
 // id stays in the URL at every depth, so the claim-context nav always knows where
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/claims/:claimId/events" element={<JobEvents />} />
         <Route path="/claims/:claimId/share" element={<Share />} />
         <Route path="/claims/:claimId/structures/:structureId" element={<StructureDetail />} />
+        <Route path="/claims/:claimId/structures/:structureId/hydro" element={<HydroPage />} />
         <Route path="/claims/:claimId/structures/:structureId/rooms/:roomId" element={<RoomDetail />} />
       </Route>
 

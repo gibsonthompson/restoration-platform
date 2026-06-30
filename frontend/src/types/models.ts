@@ -50,3 +50,22 @@ export interface Note {
   id: string; org_id: string; claim_id: string | null; room_id: string | null;
   author_id: string | null; body: string; created_at: string;
 }
+
+export type Disposition = 'restorable' | 'non_restorable' | 'disposed';
+
+export interface ContentsItem {
+  id: string;
+  org_id: string;
+  room_id: string;
+  media_id: string | null;
+  description: string | null;
+  brand: string | null;
+  model: string | null;
+  serial: string | null;
+  quantity: number | null;
+  condition: string | null;
+  disposition: Disposition | null;
+  replacement_cost: number | null;
+  acv: number | null;
+  created_at: string;
+}

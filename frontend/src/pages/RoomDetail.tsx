@@ -5,14 +5,16 @@ import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SubHeader } from '../components/SubHeader';
 import { uploadMedia, signedUrl } from '../lib/storage';
+import { ContentsTab } from '../features/contents/ContentsTab';
+import { SketchesTab } from '../features/sketch/SketchesTab';
 import type { Note, Room } from '../types/models';
 
 type Tab = 'photos' | 'notes' | 'contents' | 'sketches';
 
 interface MediaRow { id: string; storage_path: string; type: string; }
 
-// Room workspace: four collections. Photos and Notes are wired end to end;
-// Contents and Sketches are honest placeholders pending their modules.
+// Room workspace: four collections. Photos, Notes, Contents, and Sketches are all
+// wired end to end.
 export default function RoomDetail() {
   const { claimId, roomId } = useParams();
   const { activeOrg } = useOrg();
@@ -137,12 +139,12 @@ export default function RoomDetail() {
           </div>
         )}
 
-        {(tab === 'contents' || tab === 'sketches') && (
-          <p className="text-gray-400 text-sm">
-            {tab === 'contents'
-              ? 'Contents inventory: next module (item photos, descriptions, disposition, Schedule of Loss).'
-              : 'Sketches / moisture maps: next module (canvas editor: Move / Draw / Place / Filter / Grid).'}
-          </p>
+        {tab === 'contents' && activeOrg && claimId && roomId && (
+          <ContentsTab roomId={roomId} claimId={claimId} orgId={activeOrg.id} />
+        )}
+
+        {tab === 'sketches' && activeOrg && claimId && roomId && (
+          <SketchesTab roomId={roomId} claimId={claimId} orgId={activeOrg.id} />
         )}
       </div>
     </div>

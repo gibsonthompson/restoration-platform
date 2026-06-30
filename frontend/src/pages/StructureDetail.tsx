@@ -46,7 +46,11 @@ export default function StructureDetail() {
       <SubHeader title={structure.name} subtitle="Rooms" />
       <div className="p-4 space-y-3">
         <FeatureCard icon={Map} label="Add Floor Plans" tag="sketch module" />
-        <FeatureCard icon={Droplets} label="Hydro: Job Setup" tag="hydro module" />
+        <Link to={`/claims/${claimId}/structures/${structureId}/hydro`}
+              className="bg-white rounded border p-4 flex items-center gap-3 text-gray-700">
+          <Droplets size={18} className="text-brand" /> Hydro: Job Setup
+          <span className="ml-auto text-[11px] text-brand">Open</span>
+        </Link>
         <FeatureCard icon={Target} label="Scopes" tag="scopes module" />
 
         <div className="text-sm text-gray-500 pt-2">{rooms.length} Rooms</div>
