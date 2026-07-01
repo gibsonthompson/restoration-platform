@@ -3,18 +3,23 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; }
+/* Kill the iOS rubber-band / pull-to-refresh so it feels like an app, not a page. */
+html, body { overscroll-behavior: none; }
 body {
   margin: 0;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;   /* no grey flash on tap */
   background: #E4E9F0;
   color: #16243B;
   font-family: '"Plus Jakarta Sans"', system-ui, sans-serif;
 }
 .font-display, h1, h2, h3 { font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.02em; }
 
-/* Safe areas PLUS a comfortable baseline. env() is 0 in a browser / on
-   non-notched devices, so we add a baseline or the header would hug the top.
-   On notched phones the inset is added on top of the baseline. */
+/* Native-feel touch: no 300ms delay / double-tap zoom on controls; chrome isn't selectable. */
+button, a, [role="button"], nav, header, label { touch-action: manipulation; }
+header, nav, button { -webkit-user-select: none; user-select: none; }
+
+/* Safe areas PLUS a comfortable baseline (env() is 0 in a browser / non-notched). */
 .safe-top    { padding-top: calc(env(safe-area-inset-top) + 1.25rem); }
 .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem); }
 

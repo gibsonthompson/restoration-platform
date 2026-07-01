@@ -3,7 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers } from './SceneLayers';
 import { MoistureMapEditor } from './MoistureMapEditor';
-import { SCENE_SIZE, emptyScene, type Scene } from './sketchModel';
+import { SCENE_SIZE, normalizeScene, type Scene } from './sketchModel';
 
 interface SketchRow { id: string; canvas_json: any; type: string; created_at: string; }
 
@@ -40,25 +40,24 @@ export function SketchesTab({ roomId, claimId, orgId }:
 
   return (
     <div className="space-y-3">
-      <button onClick={() => setCreating(true)}
-              className="w-full bg-brand text-white rounded py-3 font-medium flex items-center justify-center gap-1">
-        <Plus size={16} /> New Moisture Map
+      <button onClick={() => setCreating(true)} className="btn-primary w-full py-3">
+        <Plus size={16} /> New moisture map
       </button>
 
-      {sketches.length === 0 && <p className="text-gray-400 text-sm">No moisture maps yet.</p>}
+      {sketches.length === 0 && <p className="text-gray-400 text-sm px-1">No moisture maps yet.</p>}
 
       <div className="grid grid-cols-2 gap-3">
         {sketches.map(s => {
-          const scene: Scene = s.canvas_json?.walls ? s.canvas_json : emptyScene();
+          const scene: Scene = normalizeScene(s.canvas_json);
           return (
-            <div key={s.id} className="bg-white border rounded overflow-hidden">
-              <div className="aspect-square bg-white" onClick={() => setEditing(s)}>
+            <div key={s.id} className="bg-white rounded-2xl shadow-soft overflow-hidden">
+              <div className="aspect-square bg-[#F4F7FB]" onClick={() => setEditing(s)}>
                 <svg viewBox={`0 0 ${SCENE_SIZE} ${SCENE_SIZE}`} className="w-full h-full">
                   <SceneLayers scene={scene} />
                 </svg>
               </div>
-              <div className="flex items-center justify-between px-2 py-1 border-t">
-                <span className="text-xs text-gray-500">{new Date(s.created_at).toLocaleDateString()}</span>
+              <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100">
+                <span className="text-xs font-semibold text-gray-500">{new Date(s.created_at).toLocaleDateString()}</span>
                 <button onClick={() => remove(s.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>
               </div>
             </div>
