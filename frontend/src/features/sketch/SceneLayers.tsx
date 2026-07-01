@@ -3,7 +3,7 @@ import { EQUIP_META, ptsStr, type Equip, type Pt, type Scene } from './sketchMod
 function EquipGlyph({ eq, selected }: { eq: Equip; selected?: boolean }) {
   return (
     <g transform={`translate(${eq.x},${eq.y})`}>
-      <circle r={22} fill="white" stroke={selected ? '#ea580c' : '#374151'} strokeWidth={selected ? 4 : 3} />
+      <circle r={22} fill="white" stroke={selected ? '#1483C2' : '#374151'} strokeWidth={selected ? 4 : 3} />
       <text textAnchor="middle" dominantBaseline="central" fontSize={18} fontWeight={700} fill="#374151">
         {EQUIP_META[eq.type].label}
       </text>
@@ -26,7 +26,7 @@ export function SceneLayers({ scene, currentWall, selectedId }:
       {currentWall && currentWall.length > 0 && (
         <>
           <polyline points={ptsStr(currentWall)} fill="none" stroke="#111827" strokeWidth={4} strokeDasharray="10 7" />
-          {currentWall.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={5} fill="#ea580c" />)}
+          {currentWall.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={5} fill="#1483C2" />)}
         </>
       )}
       {scene.equipment.map(eq => <EquipGlyph key={eq.id} eq={eq} selected={eq.id === selectedId} />)}

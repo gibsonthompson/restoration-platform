@@ -3,7 +3,29 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; }
-body { margin: 0; -webkit-font-smoothing: antialiased; background: #f9fafb; }
-/* Respect iOS safe areas (notch / home indicator) for the PWA shell. */
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  background: #EDF1F6;
+  color: #16243B;
+  font-family: '"Plus Jakarta Sans"', system-ui, sans-serif;
+}
+.font-display, h1, h2, h3 { font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.02em; }
+
 .safe-top { padding-top: env(safe-area-inset-top); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+@layer components {
+  .card { @apply bg-white rounded-2xl shadow-soft p-4; }
+  .input { @apply bg-white rounded-2xl shadow-soft px-4 py-3 outline-none w-full text-[15px]; }
+  .btn-primary {
+    @apply bg-gradient-to-br from-sky to-sky-deep text-white rounded-2xl font-bold
+           shadow-sky flex items-center justify-center gap-2 px-5 py-3
+           transition active:scale-[.98];
+  }
+  .btn-soft {
+    @apply bg-white text-ink rounded-2xl font-semibold shadow-soft
+           flex items-center justify-center gap-2 px-5 py-3 transition active:scale-[.98];
+  }
+  .chip { @apply text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5; }
+}

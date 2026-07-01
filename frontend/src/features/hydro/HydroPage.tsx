@@ -58,18 +58,18 @@ export default function HydroPage() {
     <div>
       <SubHeader title="Hydro: Job Setup" subtitle="S500 structural drying" />
       <div className="p-4 space-y-3">
-        <button onClick={addChamber}
-                className="w-full bg-brand text-white rounded py-3 font-medium flex items-center justify-center gap-1">
-          <Plus size={16} /> Add Drying Chamber
+        <button onClick={addChamber} className="btn-primary w-full py-3">
+          <Plus size={16} /> Add drying chamber
         </button>
-        {chambers.length === 0 && <p className="text-gray-400 text-sm">No drying chambers yet.</p>}
+        {chambers.length === 0 && <p className="text-gray-400 text-sm px-1">No drying chambers yet.</p>}
         {chambers.map(c => (
-          <button key={c.id} onClick={() => setSel(c)}
-                  className="w-full text-left bg-white border rounded p-4 flex items-center gap-3">
-            <Droplets size={18} className="text-brand" />
+          <button key={c.id} onClick={() => setSel(c)} className="card w-full text-left flex items-center gap-3 active:scale-[.99] transition">
+            <div className="w-10 h-10 rounded-xl bg-aqua-soft text-aqua-deep flex items-center justify-center shrink-0">
+              <Droplets size={18} />
+            </div>
             <div>
-              <div className="font-medium">{c.name}</div>
-              <div className="text-xs text-gray-400">
+              <div className="font-bold text-[15px]">{c.name}</div>
+              <div className="text-xs text-gray-400 font-medium mt-0.5">
                 {c.length_ft && c.width_ft ? `${c.length_ft}x${c.width_ft}x${c.height_ft ?? 8} ft` : 'No dimensions'} · Class {c.class_of_loss ?? '-'}
               </div>
             </div>
@@ -144,10 +144,13 @@ function ChamberDetail({ chamber, orgId, onBack }:
     (grouped[d] ??= []).push(r);
   });
 
-  const DimInput = ({ label, k }: { label: string; k: keyof Chamber }) => (
+  // Inline function call ({dimField(...)}) instead of <DimInput/> so the field
+  // is not remounted on each keystroke (saveDims re-renders) and keeps focus.
+  const dimField = (label: string, k: keyof Chamber) => (
     <label className="block">
-      <span className="text-[11px] text-gray-500">{label}</span>
-      <input type="number" className="w-full border rounded px-2 py-1.5 mt-0.5 text-sm"
+      <span className="text-[11px] font-medium text-gray-500">{label}</span>
+      <input type="number" inputMode="decimal"
+             className="w-full bg-white border border-gray-200 rounded-xl px-2 py-2 mt-0.5 text-sm outline-none focus:border-sky"
              value={(c[k] as any) ?? ''}
              onChange={e => saveDims({ [k]: e.target.value === '' ? null : Number(e.target.value) } as Partial<Chamber>)} />
     </label>
@@ -155,22 +158,22 @@ function ChamberDetail({ chamber, orgId, onBack }:
 
   return (
     <div>
-      <div className="bg-brand-dark text-white px-3 py-3 flex items-center gap-2">
-        <button onClick={onBack} className="p-1 -ml-1"><ChevronLeft size={22} /></button>
-        <div className="font-bold">{c.name}</div>
+      <div className="safe-top bg-gradient-to-b from-navy-soft to-navy text-white px-4 pt-4 pb-4 rounded-b-3xl flex items-center gap-2">
+        <button onClick={onBack} className="w-9 h-9 rounded-xl bg-white/12 flex items-center justify-center active:scale-95 transition"><ChevronLeft size={20} /></button>
+        <div className="font-display font-bold text-lg">{c.name}</div>
       </div>
 
       <div className="p-4 space-y-4">
         {/* Dimensions + class */}
-        <div className="bg-white border rounded p-3">
-          <div className="text-sm font-medium mb-2">Chamber</div>
+        <div className="card">
+          <div className="text-sm font-bold mb-2">Chamber</div>
           <div className="grid grid-cols-4 gap-2">
-            <DimInput label="Length" k="length_ft" />
-            <DimInput label="Width" k="width_ft" />
-            <DimInput label="Height" k="height_ft" />
+            {dimField('Length', 'length_ft')}
+            {dimField('Width', 'width_ft')}
+            {dimField('Height', 'height_ft')}
             <label className="block">
-              <span className="text-[11px] text-gray-500">Class</span>
-              <select className="w-full border rounded px-1 py-1.5 mt-0.5 text-sm"
+              <span className="text-[11px] font-medium text-gray-500">Class</span>
+              <select className="w-full bg-white border border-gray-200 rounded-xl px-1 py-2 mt-0.5 text-sm outline-none focus:border-sky"
                       value={cls} onChange={e => saveDims({ class_of_loss: Number(e.target.value) })}>
                 {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
@@ -179,15 +182,15 @@ function ChamberDetail({ chamber, orgId, onBack }:
         </div>
 
         {/* S500 equipment sizing */}
-        <div className="bg-white border rounded p-3">
-          <div className="text-sm font-medium mb-2 flex items-center gap-1"><Gauge size={15} className="text-brand" /> S500 Equipment Sizing</div>
+        <div className="card">
+          <div className="text-sm font-bold mb-2 flex items-center gap-1"><Gauge size={15} className="text-brand" /> S500 Equipment Sizing</div>
           {L && W && H ? (
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="bg-gray-50 rounded p-2 flex items-center gap-2">
+              <div className="bg-aqua-soft rounded-xl p-2.5 flex items-center gap-2">
                 <Wind size={16} className="text-gray-500" />
                 <div><div className="font-semibold">{am} air movers</div><div className="text-[11px] text-gray-400">~1 / 14 lin ft wall</div></div>
               </div>
-              <div className="bg-gray-50 rounded p-2 flex items-center gap-2">
+              <div className="bg-aqua-soft rounded-xl p-2.5 flex items-center gap-2">
                 <Droplets size={16} className="text-gray-500" />
                 <div><div className="font-semibold">{dh.units} dehu{dh.units > 1 ? 's' : ''}</div><div className="text-[11px] text-gray-400">{dh.ppdNeeded} PPD needed</div></div>
               </div>
@@ -196,9 +199,9 @@ function ChamberDetail({ chamber, orgId, onBack }:
         </div>
 
         {/* Dry standards */}
-        <div className="bg-white border rounded p-3">
+        <div className="card">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm font-medium flex items-center gap-1"><Target size={15} className="text-brand" /> Dry Standards</div>
+            <div className="text-sm font-bold flex items-center gap-1"><Target size={15} className="text-brand" /> Dry Standards</div>
             <button onClick={addStd} className="text-brand text-sm font-medium">+ Add</button>
           </div>
           {stds.length === 0 && <p className="text-xs text-gray-400">No dry standards set.</p>}
@@ -210,18 +213,18 @@ function ChamberDetail({ chamber, orgId, onBack }:
         </div>
 
         {/* Add reading */}
-        <div className="bg-white border rounded p-3 space-y-2">
-          <div className="text-sm font-medium">Add Reading</div>
-          <select className="w-full border rounded px-2 py-2 text-sm"
+        <div className="card space-y-2">
+          <div className="text-sm font-bold">Add reading</div>
+          <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky"
                   value={form.reading_type} onChange={e => setForm({ ...form, reading_type: e.target.value })}>
             {READING_TYPES.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
-          <input className="w-full border rounded px-2 py-2 text-sm" placeholder="Location label (e.g. NW corner)"
+          <input className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Location label (e.g. NW corner)"
                  value={form.location_label} onChange={e => setForm({ ...form, location_label: e.target.value })} />
           <div className="grid grid-cols-2 gap-2">
-            <input type="number" className="border rounded px-2 py-2 text-sm" placeholder="Temp F"
+            <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Temp F"
                    value={form.temp_f} onChange={e => setForm({ ...form, temp_f: e.target.value })} />
-            <input type="number" className="border rounded px-2 py-2 text-sm" placeholder="RH %"
+            <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="RH %"
                    value={form.rh_pct} onChange={e => setForm({ ...form, rh_pct: e.target.value })} />
           </div>
           {form.temp_f && form.rh_pct && !Number.isNaN(parseFloat(form.temp_f)) && !Number.isNaN(parseFloat(form.rh_pct)) && (
@@ -229,18 +232,18 @@ function ChamberDetail({ chamber, orgId, onBack }:
               = {grainsPerPound(parseFloat(form.temp_f), parseFloat(form.rh_pct))} GPP · dew {dewPointF(parseFloat(form.temp_f), parseFloat(form.rh_pct))}F
             </div>
           )}
-          <button onClick={addReading} className="w-full bg-brand text-white rounded py-2.5 text-sm font-medium">Log Reading</button>
+          <button onClick={addReading} className="btn-primary w-full py-2.5 text-sm">Log reading</button>
         </div>
 
         {/* Drying log */}
         <div>
-          <div className="text-sm font-medium mb-2">Drying Log</div>
+          <div className="text-sm font-bold mb-2">Drying log</div>
           {readings.length === 0 && <p className="text-xs text-gray-400">No readings yet.</p>}
           {Object.entries(grouped).map(([day, rs]) => (
             <div key={day} className="mb-3">
               <div className="text-xs text-gray-400 mb-1">{day}</div>
               {rs.map(r => (
-                <div key={r.id} className="bg-white border rounded p-2 mb-1 flex items-center justify-between text-sm">
+                <div key={r.id} className="card !p-3 mb-1.5 flex items-center justify-between text-sm">
                   <div>
                     <div className="font-medium">{READING_TYPES.find(t => t.v === r.reading_type)?.l ?? r.reading_type}{r.location_label ? ` · ${r.location_label}` : ''}</div>
                     <div className="text-xs text-gray-500">

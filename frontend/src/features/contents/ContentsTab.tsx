@@ -112,10 +112,13 @@ export function ContentsTab({ roomId, claimId, orgId }:
   // ---- Editor ----
   if (editing) {
     const set = (k: keyof ContentsItem) => (v: any) => setEditing(p => ({ ...(p ?? {}), [k]: v }));
-    const F = ({ label, k, type = 'text' }: { label: string; k: keyof ContentsItem; type?: string }) => (
+    // Called inline ({field(...)}) rather than rendered as <F/> so the input is
+    // never remounted between keystrokes and keeps focus while typing.
+    const field = (label: string, k: keyof ContentsItem, type = 'text') => (
       <label className="block">
-        <span className="text-xs text-gray-500">{label}</span>
-        <input type={type} className="w-full border rounded px-3 py-2 mt-1"
+        <span className="text-xs font-medium text-gray-500">{label}</span>
+        <input type={type} inputMode={type === 'number' ? 'decimal' : undefined}
+               className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
                value={(editing[k] as any) ?? ''}
                onChange={e => set(k)(type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value)} />
       </label>
@@ -123,39 +126,38 @@ export function ContentsTab({ roomId, claimId, orgId }:
     return (
       <div className="space-y-3">
         <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPickPhoto} />
-        <button onClick={() => fileRef.current?.click()}
-                className="w-full border rounded py-3 text-sm font-medium flex items-center justify-center gap-2 text-gray-600">
-          <Camera size={16} /> {draftPhotoUrl ? 'Replace Photo' : 'Add Photo'}
+        <button onClick={() => fileRef.current?.click()} className="btn-soft w-full py-3 text-sm">
+          <Camera size={16} /> {draftPhotoUrl ? 'Replace photo' : 'Add photo'}
         </button>
-        {draftPhotoUrl && <img src={draftPhotoUrl} className="w-full h-44 object-cover rounded" />}
+        {draftPhotoUrl && <img src={draftPhotoUrl} className="w-full h-44 object-cover rounded-2xl" />}
 
-        <F label="Description" k="description" />
+        {field('Description', 'description')}
         <div className="grid grid-cols-2 gap-2">
-          <F label="Brand" k="brand" />
-          <F label="Model" k="model" />
+          {field('Brand', 'brand')}
+          {field('Model', 'model')}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <F label="Serial" k="serial" />
-          <F label="Quantity" k="quantity" type="number" />
+          {field('Serial', 'serial')}
+          {field('Quantity', 'quantity', 'number')}
         </div>
-        <F label="Condition" k="condition" />
+        {field('Condition', 'condition')}
         <label className="block">
-          <span className="text-xs text-gray-500">Disposition</span>
-          <select className="w-full border rounded px-3 py-2 mt-1"
+          <span className="text-xs font-medium text-gray-500">Disposition</span>
+          <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
                   value={editing.disposition ?? 'restorable'}
                   onChange={e => set('disposition')(e.target.value)}>
             {DISPOSITIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
           </select>
         </label>
         <div className="grid grid-cols-2 gap-2">
-          <F label="Replacement Cost ($)" k="replacement_cost" type="number" />
-          <F label="Actual Cash Value ($)" k="acv" type="number" />
+          {field('Replacement cost ($)', 'replacement_cost', 'number')}
+          {field('Actual cash value ($)', 'acv', 'number')}
         </div>
 
         <div className="flex gap-2 pt-1">
-          <button onClick={() => setEditing(null)} className="flex-1 border rounded py-3 text-sm font-medium text-gray-600">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex-1 bg-brand text-white rounded py-3 text-sm font-medium disabled:opacity-50">
-            {saving ? 'Saving...' : 'Save Item'}
+          <button onClick={() => setEditing(null)} className="flex-1 btn-soft py-3 text-sm">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 btn-primary py-3 text-sm disabled:opacity-50">
+            {saving ? 'Saving...' : 'Save item'}
           </button>
         </div>
       </div>
@@ -164,28 +166,28 @@ export function ContentsTab({ roomId, claimId, orgId }:
 
   // ---- List ----
   return (
-    <div className="space-y-2">
-      <button onClick={openNew} className="w-full bg-brand text-white rounded py-3 font-medium flex items-center justify-center gap-1">
-        <Plus size={16} /> Add Item
+    <div className="space-y-2.5">
+      <button onClick={openNew} className="btn-primary w-full py-3">
+        <Plus size={16} /> Add item
       </button>
 
-      {items.length === 0 && <p className="text-gray-400 text-sm">No contents logged in this room.</p>}
+      {items.length === 0 && <p className="text-gray-400 text-sm px-1">No contents logged in this room yet.</p>}
 
       {items.map(it => {
         const disp = DISPOSITIONS.find(d => d.value === it.disposition);
         return (
-          <div key={it.id} className="bg-white border rounded p-3 flex gap-3">
-            <div className="w-14 h-14 rounded bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
+          <div key={it.id} className="card flex gap-3 active:scale-[.99] transition">
+            <div className="w-14 h-14 rounded-xl bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
               {urls[it.id] ? <img src={urls[it.id]} className="w-full h-full object-cover" /> : <Package size={20} className="text-gray-300" />}
             </div>
             <div className="flex-1 min-w-0" onClick={() => openEdit(it)}>
-              <div className="font-medium text-sm truncate">{it.description ?? 'Untitled item'}</div>
-              <div className="text-xs text-gray-400 truncate">
+              <div className="font-bold text-sm truncate">{it.description ?? 'Untitled item'}</div>
+              <div className="text-xs text-gray-400 font-medium truncate mt-0.5">
                 {[it.brand, it.model].filter(Boolean).join(' ') || '—'} · Qty {it.quantity ?? 1}
               </div>
-              <div className="flex items-center gap-2 mt-1">
-                {disp && <span className={`text-[10px] px-1.5 py-0.5 rounded ${disp.cls}`}>{disp.label}</span>}
-                {it.replacement_cost != null && <span className="text-xs text-gray-600">RCV ${Number(it.replacement_cost).toFixed(0)}</span>}
+              <div className="flex items-center gap-2 mt-1.5">
+                {disp && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${disp.cls}`}>{disp.label}</span>}
+                {it.replacement_cost != null && <span className="text-xs font-semibold text-gray-600">RCV ${Number(it.replacement_cost).toFixed(0)}</span>}
               </div>
             </div>
             <button onClick={() => remove(it.id)} className="text-gray-300 hover:text-red-500 self-start"><Trash2 size={16} /></button>
@@ -194,9 +196,9 @@ export function ContentsTab({ roomId, claimId, orgId }:
       })}
 
       {items.length > 0 && (
-        <div className="bg-gray-100 rounded p-3 text-sm flex justify-between mt-2">
-          <span className="text-gray-500">Schedule of Loss ({items.length})</span>
-          <span className="font-semibold">RCV ${totalRcv.toFixed(0)} · ACV ${totalAcv.toFixed(0)}</span>
+        <div className="bg-aqua-soft rounded-2xl p-3.5 text-sm flex justify-between items-center mt-2">
+          <span className="text-aqua-deep font-semibold">Schedule of Loss · {items.length} items</span>
+          <span className="font-bold text-aqua-deep">RCV ${totalRcv.toFixed(0)} · ACV ${totalAcv.toFixed(0)}</span>
         </div>
       )}
     </div>

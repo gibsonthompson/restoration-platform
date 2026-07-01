@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Droplet, Flame, Sprout, FolderOpen } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import type { Claim } from '../types/models';
 
-// Mirrors the "Property Claims" list screen.
+// Loss-type visual language: water=aqua, fire=coral, mold=green.
+function lossStyle(type: string | null) {
+  switch (type) {
+    case 'water': return { icon: Droplet, thumb: 'bg-aqua-soft text-aqua-deep', chip: 'bg-aqua-soft text-aqua-deep', dot: 'bg-aqua', label: 'Water' };
+    case 'fire':  return { icon: Flame, thumb: 'bg-coral-soft text-coral-deep', chip: 'bg-coral-soft text-coral-deep', dot: 'bg-coral', label: 'Fire' };
+    case 'mold':  return { icon: Sprout, thumb: 'bg-green-50 text-green-600', chip: 'bg-green-50 text-green-600', dot: 'bg-green-500', label: 'Mold' };
+    default:      return { icon: FolderOpen, thumb: 'bg-gray-100 text-gray-500', chip: 'bg-gray-100 text-gray-500', dot: 'bg-gray-400', label: 'Claim' };
+  }
+}
+
 export default function ClaimsList() {
   const { activeOrg } = useOrg();
   const [claims, setClaims] = useState<Claim[]>([]);
@@ -25,33 +34,60 @@ export default function ClaimsList() {
       .some(v => v?.toLowerCase().includes(q.toLowerCase())));
 
   return (
-    <div className="p-4 space-y-3">
-      <div className="flex gap-2">
-        <div className="flex-1 flex items-center gap-2 border rounded px-3 bg-white">
-          <Search size={16} className="text-gray-400" />
-          <input className="flex-1 py-2 outline-none" placeholder="Search all claims"
+    <div className="p-4 space-y-4">
+      <div className="pt-1">
+        <h1 className="text-[22px] font-bold">Claims</h1>
+        <p className="text-[13px] text-gray-500 font-medium">
+          {claims.length === 0 ? 'No active jobs yet' : `${claims.length} active ${claims.length === 1 ? 'job' : 'jobs'}`}
+        </p>
+      </div>
+
+      <div className="flex gap-2.5">
+        <div className="input flex items-center gap-2.5 py-0">
+          <Search size={18} className="text-gray-400" />
+          <input className="flex-1 py-3 outline-none bg-transparent text-[15px]" placeholder="Search all claims"
                  value={q} onChange={e => setQ(e.target.value)} />
         </div>
-        <Link to="/claims/new" className="bg-brand text-white rounded px-4 flex items-center gap-1 font-medium">
-          <Plus size={16} /> Add
+        <Link to="/claims/new" className="btn-primary px-4 shrink-0">
+          <Plus size={18} /> New
         </Link>
       </div>
 
-      {loading && <p className="text-gray-400 text-sm">Loading...</p>}
-      {!loading && filtered.length === 0 && <p className="text-gray-400 text-sm">No claims yet.</p>}
+      {loading && <p className="text-gray-400 text-sm px-1">Loading claims...</p>}
 
-      <div className="space-y-2">
-        {filtered.map(c => (
-          <Link key={c.id} to={`/claims/${c.id}`}
-                className="block bg-white rounded border p-4 hover:bg-gray-50">
-            <div className="flex justify-between">
-              <span className="font-semibold">{c.policyholder_name ?? 'Unnamed'}</span>
-              <span className="text-xs text-gray-400">{c.date_created ?? ''}</span>
-            </div>
-            <div className="text-sm text-gray-600">{c.carrier_identifier ?? 'No job #'}</div>
-            <div className="text-sm text-gray-400">{c.address ?? ''}</div>
-          </Link>
-        ))}
+      {!loading && filtered.length === 0 && (
+        <div className="flex flex-col items-center text-center gap-3 pt-16 px-8">
+          <div className="w-16 h-16 rounded-3xl bg-sky-soft text-sky flex items-center justify-center">
+            <FolderOpen size={30} />
+          </div>
+          <p className="text-gray-500 font-medium text-sm">
+            {q ? 'No claims match your search.' : 'Your first job is one tap away. Add a claim to start documenting.'}
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-2.5">
+        {filtered.map(c => {
+          const s = lossStyle(c.type_of_loss);
+          const Icon = s.icon;
+          return (
+            <Link key={c.id} to={`/claims/${c.id}`} className="card flex gap-3.5 items-center active:scale-[.99] transition">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${s.thumb}`}>
+                <Icon size={22} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-[15.5px] leading-tight truncate">{c.policyholder_name ?? 'Unnamed claim'}</div>
+                <div className="text-[12.5px] text-gray-500 font-medium truncate mt-0.5">
+                  {[c.carrier_identifier, c.address].filter(Boolean).join(' · ') || 'No job number yet'}
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <span className={`chip ${s.chip}`}><span className={`w-2 h-2 rounded-full ${s.dot}`} />{s.label}</span>
+                <span className="text-[11px] text-gray-400 font-semibold">{c.date_created ?? ''}</span>
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );
