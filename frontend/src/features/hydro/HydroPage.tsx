@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind } from 'lucide-react';
+import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { SubHeader } from '../../components/SubHeader';
@@ -28,7 +28,7 @@ const READING_TYPES = [
 // a daily psychrometric readings log (GPP + dew point auto-computed), and dry
 // standards. All deterministic; no backend needed.
 export default function HydroPage() {
-  const { structureId } = useParams();
+  const { structureId, claimId } = useParams();
   const { activeOrg } = useOrg();
   const [chambers, setChambers] = useState<Chamber[]>([]);
   const [sel, setSel] = useState<Chamber | null>(null);
@@ -52,7 +52,7 @@ export default function HydroPage() {
     if (data) setSel(data as Chamber);
   }
 
-  if (sel) return <ChamberDetail chamber={sel} orgId={activeOrg!.id} onBack={() => { setSel(null); void load(); }} />;
+  if (sel) return <ChamberDetail chamber={sel} orgId={activeOrg!.id} claimId={claimId} onBack={() => { setSel(null); void load(); }} />;
 
   return (
     <div>
@@ -80,12 +80,54 @@ export default function HydroPage() {
   );
 }
 
-function ChamberDetail({ chamber, orgId, onBack }:
-  { chamber: Chamber; orgId: string; onBack: () => void }) {
+// Downscale a photo to a base64 JPEG small enough to POST for OCR.
+async function fileToScaledBase64(file: File, max = 1400): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file);
+  });
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(img.src);
+  return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+}
+
+function ChamberDetail({ chamber, orgId, claimId, onBack }:
+  { chamber: Chamber; orgId: string; claimId?: string; onBack: () => void }) {
   const [c, setC] = useState<Chamber>(chamber);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [stds, setStds] = useState<DryStd[]>([]);
   const [form, setForm] = useState({ reading_type: 'psychrometric', location_label: '', temp_f: '', rh_pct: '' });
+  const [ocr, setOcr] = useState(false);
+  const meterRef = useRef<HTMLInputElement>(null);
+
+  // Snap a thermo-hygrometer photo -> Claude vision OCR -> auto-fill temp + RH.
+  async function onMeterPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return;
+    const api = import.meta.env.VITE_API_URL;
+    if (!api) { alert('Meter OCR is not configured (missing VITE_API_URL).'); return; }
+    if (!claimId) return;
+    setOcr(true);
+    try {
+      const imageBase64 = await fileToScaledBase64(file);
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${api}/api/resto/ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ claimId, imageBase64, mediaType: 'image/jpeg' })
+      });
+      const json = await res.json();
+      if (!res.ok) { alert('Could not read meter: ' + (json.error || res.status)); return; }
+      const r = json.reading || {};
+      if (r.temp_f == null && r.rh_pct == null) { alert('No temp/RH detected. The meter showed: ' + (r.raw || 'nothing readable')); return; }
+      setForm(f => ({ ...f, temp_f: r.temp_f != null ? String(r.temp_f) : f.temp_f, rh_pct: r.rh_pct != null ? String(r.rh_pct) : f.rh_pct }));
+    } catch (err: any) {
+      alert('Meter read failed: ' + (err?.message ?? 'error'));
+    } finally {
+      setOcr(false); if (meterRef.current) meterRef.current.value = '';
+    }
+  }
 
   async function loadAll() {
     const [{ data: r }, { data: s }] = await Promise.all([
@@ -232,6 +274,10 @@ function ChamberDetail({ chamber, orgId, onBack }:
               = {grainsPerPound(parseFloat(form.temp_f), parseFloat(form.rh_pct))} GPP · dew {dewPointF(parseFloat(form.temp_f), parseFloat(form.rh_pct))}F
             </div>
           )}
+          <input ref={meterRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onMeterPhoto} />
+          <button onClick={() => meterRef.current?.click()} disabled={ocr} className="btn-soft w-full py-2.5 text-sm disabled:opacity-50">
+            <Camera size={15} /> {ocr ? 'Reading meter...' : 'Snap meter photo'}
+          </button>
           <button onClick={addReading} className="btn-primary w-full py-2.5 text-sm">Log reading</button>
         </div>
 
@@ -243,7 +289,7 @@ function ChamberDetail({ chamber, orgId, onBack }:
             <div key={day} className="mb-3">
               <div className="text-xs text-gray-400 mb-1">{day}</div>
               {rs.map(r => (
-                <div key={r.id} className="card !p-3 mb-1.5 flex items-center justify-between text-sm">
+                <div key={r.id} className="bg-white border rounded p-2 mb-1 flex items-center justify-between text-sm">
                   <div>
                     <div className="font-medium">{READING_TYPES.find(t => t.v === r.reading_type)?.l ?? r.reading_type}{r.location_label ? ` · ${r.location_label}` : ''}</div>
                     <div className="text-xs text-gray-500">

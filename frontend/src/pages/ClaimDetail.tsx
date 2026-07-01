@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Pencil, Share2, FileText, StickyNote, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout } from 'lucide-react';
+import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import type { Claim, Structure } from '../types/models';
@@ -74,9 +74,10 @@ export default function ClaimDetail() {
 
         <div className="flex gap-2 mt-4">
           <Action icon={Pencil} label="Edit" to={`/claims/${claim.id}/edit`} />
-          <Action icon={Share2} label="Share" to={`/claims/${claim.id}/share`} />
+          <Action icon={ClipboardList} label="Scope" to={`/claims/${claim.id}/scope`} />
           <Action icon={FileText} label="Docs" to={`/claims/${claim.id}/documents`} />
           <Action icon={StickyNote} label="Notes" to={`/claims/${claim.id}/notes`} />
+          <Action icon={Share2} label="Share" to={`/claims/${claim.id}/share`} />
         </div>
       </div>
 

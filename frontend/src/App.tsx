@@ -11,6 +11,7 @@ import Documents from './pages/Documents';
 import GeneralNotes from './pages/GeneralNotes';
 import JobEvents from './pages/JobEvents';
 import Share from './pages/Share';
+import ScopePage from './pages/ScopePage';
 import Search from './pages/Search';
 import Notifications from './pages/Notifications';
 import OrgSettings from './pages/settings/OrgSettings';
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/claims/:claimId/notes" element={<GeneralNotes />} />
         <Route path="/claims/:claimId/events" element={<JobEvents />} />
         <Route path="/claims/:claimId/share" element={<Share />} />
+        <Route path="/claims/:claimId/scope" element={<ScopePage />} />
         <Route path="/claims/:claimId/structures/:structureId" element={<StructureDetail />} />
         <Route path="/claims/:claimId/structures/:structureId/hydro" element={<HydroPage />} />
         <Route path="/claims/:claimId/structures/:structureId/rooms/:roomId" element={<RoomDetail />} />
