@@ -18,20 +18,48 @@ function lossStyle(type: string | null) {
 export default function ClaimsList() {
   const { activeOrg } = useOrg();
   const [claims, setClaims] = useState<Claim[]>([]);
+  const [shared, setShared] = useState<Claim[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!activeOrg) return;
     setLoading(true);
-    supabase.from('resto_claims').select('*').eq('org_id', activeOrg.id)
-      .order('created_at', { ascending: false })
-      .then(({ data }) => { setClaims((data as Claim[]) ?? []); setLoading(false); });
+    Promise.all([
+      supabase.from('resto_claims').select('*').eq('org_id', activeOrg.id).order('created_at', { ascending: false }),
+      supabase.from('resto_claims').select('*').neq('org_id', activeOrg.id).order('created_at', { ascending: false })
+    ]).then(([own, sh]) => {
+      setClaims((own.data as Claim[]) ?? []);
+      setShared((sh.data as Claim[]) ?? []);
+      setLoading(false);
+    });
   }, [activeOrg?.id]);
 
   const filtered = claims.filter(c =>
     !q || [c.policyholder_name, c.address, c.carrier_identifier]
       .some(v => v?.toLowerCase().includes(q.toLowerCase())));
+
+  const ClaimCard = ({ c, isShared }: { c: Claim; isShared?: boolean }) => {
+    const st = lossStyle(c.type_of_loss);
+    const Icon = st.icon;
+    return (
+      <Link to={`/claims/${c.id}`} className="card flex gap-3.5 items-center active:scale-[.99] transition">
+        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${st.thumb}`}><Icon size={22} /></div>
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-[15.5px] leading-tight truncate">{c.policyholder_name ?? 'Unnamed claim'}</div>
+          <div className="text-[12.5px] text-gray-500 font-medium truncate mt-0.5">
+            {[c.carrier_identifier, c.address].filter(Boolean).join(' · ') || 'No job number yet'}
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <span className={`chip ${st.chip}`}><span className={`w-2 h-2 rounded-full ${st.dot}`} />{st.label}</span>
+          {isShared
+            ? <span className="text-[10px] font-bold text-sky-deep bg-sky-soft px-2 py-0.5 rounded-full">Shared</span>
+            : <span className="text-[11px] text-gray-400 font-semibold">{c.date_created ?? ''}</span>}
+        </div>
+      </Link>
+    );
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -67,28 +95,17 @@ export default function ClaimsList() {
       )}
 
       <div className="space-y-2.5">
-        {filtered.map(c => {
-          const s = lossStyle(c.type_of_loss);
-          const Icon = s.icon;
-          return (
-            <Link key={c.id} to={`/claims/${c.id}`} className="card flex gap-3.5 items-center active:scale-[.99] transition">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${s.thumb}`}>
-                <Icon size={22} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-[15.5px] leading-tight truncate">{c.policyholder_name ?? 'Unnamed claim'}</div>
-                <div className="text-[12.5px] text-gray-500 font-medium truncate mt-0.5">
-                  {[c.carrier_identifier, c.address].filter(Boolean).join(' · ') || 'No job number yet'}
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1.5 shrink-0">
-                <span className={`chip ${s.chip}`}><span className={`w-2 h-2 rounded-full ${s.dot}`} />{s.label}</span>
-                <span className="text-[11px] text-gray-400 font-semibold">{c.date_created ?? ''}</span>
-              </div>
-            </Link>
-          );
-        })}
+        {filtered.map(c => <ClaimCard key={c.id} c={c} />)}
       </div>
+
+      {shared.length > 0 && (
+        <div className="pt-1">
+          <div className="text-[12px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-2">Shared with me</div>
+          <div className="space-y-2.5">
+            {shared.map(c => <ClaimCard key={c.id} c={c} isShared />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
