@@ -13,6 +13,14 @@ const META: Record<string, { icon: any; tint: string }> = {
   report:      { icon: FileText, tint: 'bg-slate-100 text-slate-600' }
 };
 
+// What lands in the log, shown in the empty state so the tech knows what to expect.
+const EMPTY_ROWS: { icon: any; tint: string; title: string; sub: string }[] = [
+  { icon: FileText, tint: 'bg-slate-100 text-slate-600', title: 'Report generated', sub: 'When you export the claim report' },
+  { icon: Link2, tint: 'bg-sky-soft text-sky-deep', title: 'Link shared', sub: 'When you create a public report link' },
+  { icon: MessageSquare, tint: 'bg-sky-soft text-sky-deep', title: 'Text sent', sub: 'When the report is texted to the client' },
+  { icon: Mail, tint: 'bg-aqua-soft text-aqua-deep', title: 'Email sent', sub: 'When the report is emailed' }
+];
+
 // Claim activity log. Fed by server-side events (report sends, etc.) so there is
 // a defensible record of what went to whom and when.
 export default function JobEvents() {
@@ -32,9 +40,35 @@ export default function JobEvents() {
       <SubHeader title="Activity" subtitle="Sends and updates on this claim" />
       <div className="p-4">
         {loading && <p className="text-gray-400 text-sm px-1">Loading...</p>}
+
         {!loading && events.length === 0 && (
-          <p className="text-gray-400 text-sm px-1">No activity yet. Sends and updates will appear here.</p>
+          <div className="flex flex-col items-center text-center px-6 pt-12 pb-6">
+            <div className="w-16 h-16 rounded-2xl bg-sky-soft text-sky-deep flex items-center justify-center mb-4">
+              <Activity size={28} />
+            </div>
+            <h3 className="font-display font-bold text-[17px] text-navy">No activity yet</h3>
+            <p className="text-sm text-gray-500 mt-1.5 max-w-[290px] leading-relaxed">
+              Every time you send this claim's report, it's logged here with a timestamp, so you keep a defensible record of what went out and when.
+            </p>
+
+            <div className="w-full max-w-[300px] mt-7 space-y-3 text-left">
+              {EMPTY_ROWS.map(({ icon: Icon, tint, title, sub }) => (
+                <div key={title} className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${tint}`}><Icon size={15} /></div>
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold text-navy leading-tight">{title}</div>
+                    <div className="text-[11px] text-gray-400">{sub}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[11px] text-gray-400 mt-7 max-w-[280px]">
+              Send a report from the Share tab to start the log.
+            </p>
+          </div>
         )}
+
         <div className="space-y-2.5">
           {events.map(e => {
             const m = META[e.kind] ?? { icon: Activity, tint: 'bg-gray-100 text-gray-500' };
