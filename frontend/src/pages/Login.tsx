@@ -18,9 +18,6 @@ export default function Login() {
   }
 
   return (
-    // Seated in the upper third: high enough that the mobile keyboard clears the
-    // button, with real breathing room above so it reads as intentional. The vh
-    // offset scales across phone sizes; 100dvh tracks the dynamic viewport.
     <div className="min-h-[100dvh] bg-gray-50 flex justify-center px-6 pb-10"
          style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
       <div className="w-full max-w-sm">
