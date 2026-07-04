@@ -1,14 +1,23 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-// PWA configured for offline-first field use. autoUpdate so techs always get the
-// latest shell. The service worker precaches the shell; data sync is handled
-// explicitly by the app (src/lib/syncQueue.ts), NOT by the SW, because field
-// data integrity must not depend on opaque cache behavior.
+// Build id stamped into the app (__APP_VERSION__) and written to dist/version.json.
+// The running app polls version.json and force-updates on a mismatch (src/lib/version.ts).
+const BUILD_ID = String(Date.now());
+
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
+    {
+      name: 'emit-version-json',
+      closeBundle() {
+        try { writeFileSync(resolve(process.cwd(), 'dist/version.json'), JSON.stringify({ version: BUILD_ID })); } catch { /* ignore */ }
+      }
+    },
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png', 'favicon-32.png', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png'],
