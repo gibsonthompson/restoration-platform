@@ -35,10 +35,10 @@ export default function Signup() {
 
         <div className="space-y-3">
           {err && <p className="text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl px-3 py-2">{err}</p>}
-          <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 focus:outline-none focus:border-sky"
+          <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 text-[16px] focus:outline-none focus:border-sky"
                  placeholder="Email" type="email" autoComplete="email" inputMode="email"
                  value={email} onChange={e => setEmail(e.target.value)} />
-          <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 focus:outline-none focus:border-sky"
+          <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 text-[16px] focus:outline-none focus:border-sky"
                  placeholder="Password" type="password" autoComplete="new-password"
                  value={password} onChange={e => setPassword(e.target.value)}
                  onKeyDown={e => { if (e.key === 'Enter') submit(); }} />

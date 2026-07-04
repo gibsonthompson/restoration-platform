@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
+html, body, #root { height: 100vh; }   /* 100vh is the only unit correct from PWA cold start (not 100% or 100dvh) */
 /* Lock the page itself: it never scrolls or rubber-bands. Only the app's inner
    scroll area moves, and only vertically (set on <main>). Feels like an app. */
 html, body { overscroll-behavior: none; overflow: hidden; }

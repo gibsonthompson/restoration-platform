@@ -13,19 +13,24 @@ function TextField({ label, value, onChange, type = 'text' }:
     <label className="block">
       <span className="text-xs font-medium text-gray-500">{label}</span>
       <input type={type}
-             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky"
+             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] text-left outline-none focus:border-sky [&::-webkit-date-and-time-value]:text-left [&::-webkit-datetime-edit]:text-left"
              value={value} onChange={e => onChange(e.target.value)} />
     </label>
   );
 }
 
+// Local YYYY-MM-DD (not toISOString, which is UTC and can shift the day).
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const empty: Partial<Claim> = { type_of_loss: 'water', status: 'open' };
 
 export default function EditClaim() {
   const { claimId } = useParams();
   const { activeOrg } = useOrg();
   const nav = useNavigate();
-  const [f, setF] = useState<Partial<Claim>>(empty);
+  const [f, setF] = useState<Partial<Claim>>(() => ({ ...empty, date_of_loss: todayLocal() }));
   const [saving, setSaving] = useState(false);
   const editing = Boolean(claimId);
 
@@ -43,7 +48,6 @@ export default function EditClaim() {
   async function save() {
     if (!activeOrg || saving) return;
     setSaving(true);
-    // Strip read-only/joined fields so update/insert payloads stay clean.
     const { created_at, ...rest } = f as any;
     const row = { ...rest, org_id: activeOrg.id };
     try {
