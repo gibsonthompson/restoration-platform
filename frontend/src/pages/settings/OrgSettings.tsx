@@ -59,13 +59,14 @@ export default function OrgSettings() {
     supabase.from('resto_org_settings').select('*').eq('org_id', activeOrg.id).limit(1)
       .then(({ data }) => {
         const row: any = data && data[0];
+        const b: any = row?.report_branding ?? row ?? {};   // branding lives in the report_branding jsonb column
         setF({
-          company_name: row?.company_name ?? activeOrg.name ?? '',
-          logo_data_url: row?.logo_data_url ?? '',
-          primary_color: row?.primary_color ?? '#0E2A4D',
-          accent_color: row?.accent_color ?? '#29ABE6',
-          phone: row?.phone ?? '', email: row?.email ?? '', website: row?.website ?? '',
-          license_number: row?.license_number ?? '', report_footer: row?.report_footer ?? ''
+          company_name: b.company_name ?? activeOrg.name ?? '',
+          logo_data_url: b.logo_data_url ?? '',
+          primary_color: b.primary_color ?? '#0E2A4D',
+          accent_color: b.accent_color ?? '#29ABE6',
+          phone: b.phone ?? '', email: b.email ?? '', website: b.website ?? '',
+          license_number: b.license_number ?? '', report_footer: b.report_footer ?? ''
         });
         setLoading(false);
       });
@@ -81,7 +82,7 @@ export default function OrgSettings() {
     if (!activeOrg) return;
     setSaving(true); setSaved(false);
     const { error } = await supabase.from('resto_org_settings')
-      .upsert({ org_id: activeOrg.id, ...f, updated_at: new Date().toISOString() }, { onConflict: 'org_id' });
+      .upsert({ org_id: activeOrg.id, report_branding: f, updated_at: new Date().toISOString() }, { onConflict: 'org_id' });
     setSaving(false);
     if (error) alert('Save failed: ' + error.message);
     else { setSaved(true); setTimeout(() => setSaved(false), 2500); }
