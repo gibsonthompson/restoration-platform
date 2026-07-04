@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
+import { NameSheet } from '../components/NameSheet';
 import type { Claim, Structure } from '../types/models';
 
 const lossChip = (t: string | null) =>
@@ -10,12 +11,15 @@ const lossChip = (t: string | null) =>
   t === 'fire'  ? { Icon: Flame, label: 'Fire' } :
   t === 'mold'  ? { Icon: Sprout, label: 'Mold' } : null;
 
+const STRUCTURE_SUGGESTIONS = ['Main Level', 'Second Level', 'Basement', 'Attic', 'Garage', 'Crawlspace', 'Exterior'];
+
 export default function ClaimDetail() {
   const { claimId } = useParams();
   const { activeOrg } = useOrg();
   const nav = useNavigate();
   const [claim, setClaim] = useState<Claim | null>(null);
   const [structures, setStructures] = useState<Structure[]>([]);
+  const [adding, setAdding] = useState(false);
 
   async function load() {
     if (!claimId) return;
@@ -27,14 +31,12 @@ export default function ClaimDetail() {
   }
   useEffect(() => { void load(); }, [claimId]);
 
-  async function addStructure() {
+  async function createStructure(name: string) {
     if (!activeOrg || !claimId) return;
-    const name = prompt('Structure name (e.g. Main Level, Basement)');
-    if (!name) return;
     await supabase.from('resto_structures').insert({
       org_id: activeOrg.id, claim_id: claimId, name, sort_order: structures.length
     });
-    void load();
+    setAdding(false); void load();
   }
 
   if (!claim) return <div className="p-4 text-gray-400">Loading...</div>;
@@ -82,7 +84,7 @@ export default function ClaimDetail() {
       </div>
 
       <div className="p-4 space-y-3">
-        <button onClick={addStructure} className="btn-primary w-full py-3.5">
+        <button onClick={() => setAdding(true)} className="btn-primary w-full py-3.5">
           <Plus size={18} /> Add structure
         </button>
 
@@ -105,6 +107,12 @@ export default function ClaimDetail() {
           </Link>
         ))}
       </div>
+
+      {adding && (
+        <NameSheet title="Add structure" subtitle="Pick a level or building, or type your own."
+          placeholder="Structure name" suggestions={STRUCTURE_SUGGESTIONS} existing={structures.map(s => s.name)}
+          onCancel={() => setAdding(false)} onSubmit={createStructure} />
+      )}
     </div>
   );
 }
