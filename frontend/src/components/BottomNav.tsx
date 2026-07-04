@@ -22,7 +22,8 @@ export function BottomNav() {
   const is = (p: string) => pathname === p;
 
   return (
-    <nav className="safe-bottom bg-white border-t border-gray-100 flex sticky bottom-0 pt-2.5 pb-1.5">
+    <nav className="bg-white border-t border-gray-100 flex shrink-0 pt-2"
+         style={{ paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))' }}>
       {claimId ? (
         <>
           <Item icon={Home} label="Overview" to={`/claims/${claimId}`} active={pathname === `/claims/${claimId}`} />

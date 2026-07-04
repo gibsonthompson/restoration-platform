@@ -13,7 +13,7 @@ function TextField({ label, value, onChange, type = 'text' }:
     <label className="block">
       <span className="text-xs font-medium text-gray-500">{label}</span>
       <input type={type}
-             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
+             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky"
              value={value} onChange={e => onChange(e.target.value)} />
     </label>
   );
@@ -60,7 +60,7 @@ export default function EditClaim() {
 
   return (
     <div>
-      <div className="safe-top bg-gradient-to-b from-navy-soft to-navy text-white px-4 pt-4 pb-4 rounded-b-3xl">
+      <div className="safe-top bg-gradient-to-b from-navy-soft to-navy text-white px-4 pt-4 pb-4 rounded-b-3xl sticky top-0 z-20">
         <button onClick={() => nav(-1)} className="w-9 h-9 rounded-xl bg-white/12 flex items-center justify-center mb-3 active:scale-95 transition">
           <ChevronLeft size={20} />
         </button>
@@ -76,7 +76,7 @@ export default function EditClaim() {
 
         <label className="block">
           <span className="text-xs font-medium text-gray-500">Type of loss</span>
-          <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
+          <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky"
                   value={f.type_of_loss ?? 'water'}
                   onChange={e => setF(p => ({ ...p, type_of_loss: e.target.value as TypeOfLoss }))}>
             <option value="water">Water</option>
@@ -89,7 +89,7 @@ export default function EditClaim() {
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="text-xs font-medium text-gray-500">Category of water</span>
-            <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
+            <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky"
                     value={(f.category_of_water as number | null) ?? ''} onChange={e => setNum('category_of_water')(e.target.value)}>
               <option value="">—</option>
               {[1, 2, 3].map(n => <option key={n} value={n}>Cat {n}</option>)}
@@ -97,7 +97,7 @@ export default function EditClaim() {
           </label>
           <label className="block">
             <span className="text-xs font-medium text-gray-500">Class of water</span>
-            <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
+            <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky"
                     value={(f.class_of_water as number | null) ?? ''} onChange={e => setNum('class_of_water')(e.target.value)}>
               <option value="">—</option>
               {[1, 2, 3, 4].map(n => <option key={n} value={n}>Class {n}</option>)}
