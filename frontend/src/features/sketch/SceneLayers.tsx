@@ -1,13 +1,13 @@
 import { EQUIP_META, ptsStr, pointDisplay, smoothClosedPath, polygonCentroid, wallById, openingGeom, type Arrow, type Equip, type EquipType, type MoisturePoint, type Opening, type Poly, type Pt, type Scene } from './sketchModel';
 
-const FAN_BLADE = 'M0 0 C 2.6 -1.2 4.4 -4.4 2.5 -8.4 C 1 -6 -0.6 -3 0 0 Z';
 // Pictographic equipment icons (fan / dehumidifier unit / filter), identical to
 // the report engine (resto-map-svg.js) so the app and PDF match exactly.
-function EquipIcon({ type }: { type: EquipType }) {
+export function EquipIcon({ type }: { type: EquipType }) {
   if (type === 'air_mover') return (
-    <g fill="#fff">
-      <path d={FAN_BLADE} /><path d={FAN_BLADE} transform="rotate(120)" /><path d={FAN_BLADE} transform="rotate(240)" />
-      <circle r={1.7} />
+    <g>
+      <circle cx={-0.5} cy={1} r={5.6} fill="#fff" />
+      <path d="M3 -2.4 L8.6 -6 L10.2 -3.3 L4.6 0.3 Z" fill="#fff" />
+      <circle cx={-0.5} cy={1} r={2.15} fill="#29ABE6" />
     </g>
   );
   if (type === 'dehumidifier') return (

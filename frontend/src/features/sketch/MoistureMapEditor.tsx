@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { X, Undo2, Save, Move, Square, Droplet, Grid3x3, Plus, Minus, Trash2, MapPin } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { SceneLayers } from './SceneLayers';
+import { SceneLayers, EquipIcon } from './SceneLayers';
 import {
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
-  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, ptsStr, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
+  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door';
@@ -13,19 +13,18 @@ type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'w
 interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
 
-const PLACE_SET: Tool[] = ['equip', 'reading', 'arrow', 'door'];   // grouped under the Place tab
+const PLACE_SET: Tool[] = ['equip', 'reading', 'arrow'];   // grouped under the Place tab
 const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
-const FAN = 'M0 0 C 2.6 -1.2 4.4 -4.4 2.5 -8.4 C 1 -6 -0.6 -3 0 0 Z';
 // Palette stickers — the same icons that get placed on the map, so a tech sees
 // exactly what they're adding. Full names live on the buttons (no abbreviations).
 function PlaceGlyph({ kind }: { kind: string }) {
   if (kind === 'air_mover') return (
     <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#29ABE6" stroke="#1483C2" strokeWidth={1.5} />
-      <g fill="#fff" transform="scale(0.85)"><path d={FAN} /><path d={FAN} transform="rotate(120)" /><path d={FAN} transform="rotate(240)" /><circle r={1.5} /></g></svg>
+      <g transform="scale(0.92)"><circle cx={-0.5} cy={1} r={5.6} fill="#fff" /><path d="M3 -2.4 L8.6 -6 L10.2 -3.3 L4.6 0.3 Z" fill="#fff" /><circle cx={-0.5} cy={1} r={2.15} fill="#29ABE6" /></g></svg>
   );
   if (kind === 'dehumidifier') return (
     <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#11B5C6" stroke="#0B7C88" strokeWidth={1.5} />
@@ -56,8 +55,8 @@ function PlaceGlyph({ kind }: { kind: string }) {
 // Moisture-map editor. Accurate pointer mapping (getScreenCTM), a single camera
 // transform, tldraw-style snapping (grid + corners + axis guides at 8px/zoom),
 // draggable corner handles, and a magnifier loupe for precise touch placement.
-export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
-  { sketch: SketchRow | null; roomId: string; claimId: string; orgId: string; onClose: (saved: boolean) => void }) {
+export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, onClose }:
+  { sketch: SketchRow | null; roomId: string; roomName?: string; claimId: string; orgId: string; onClose: (saved: boolean) => void }) {
   void claimId;
   const [scene, setScene] = useState<Scene>(() => normalizeScene(sketch?.canvas_json));
   const [history, setHistory] = useState<Scene[]>([]);
@@ -65,6 +64,7 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
   const [equipType, setEquipType] = useState<EquipType>('air_mover');
   const [doorKind, setDoorKind] = useState<OpeningKind>('door');
   const [roomMode, setRoomMode] = useState<RoomMode>('rect');
+  const [lastRoomKey, setLastRoomKey] = useState<string>('rect');
   const [lastPlace, setLastPlace] = useState<Tool>('equip');   // remembers the last Place sub-tool
   const [showGrid, setShowGrid] = useState(true);
   const [activeDate, setActiveDate] = useState<string>(todayISO());
@@ -75,6 +75,7 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
   const [active, setActive] = useState<{ scene: Pt; px: Pt } | null>(null);
   const [guide, setGuide] = useState<{ x?: number; y?: number } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [paletteGhost, setPaletteGhost] = useState<{ kind: string; x: number; y: number; over: boolean } | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -84,6 +85,7 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
   const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
+  const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
   // ---- sizing + initial fit ----
   useLayoutEffect(() => {
@@ -250,29 +252,7 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
       const mat = prompt('Material for this area (e.g. Drywall, Carpet, Subfloor)', cur?.material ?? '');
       if (mat != null) { snapshot(); const m = mat.trim(); setScene(sc => ({ ...sc, walls: sc.walls.map(w => w.id === id ? { ...w, material: m || undefined } : w) })); }
     } else if (g.current.kind === 'place' && active) {
-      const p = active.scene;
-      if (tool === 'equip') { snapshot(); setScene(sc => ({ ...sc, equipment: [...sc.equipment, { id: uid(), type: equipType, x: p[0], y: p[1] }] })); }
-      else if (tool === 'door') {
-        const near = nearestWallEdge(scene, g.current.downScene![0], g.current.downScene![1]);
-        if (near && near.dist < 45 && near.edgeLen > UNITS_PER_FT) {
-          const widthFt = OPENING_DEFAULT_FT[doorKind];
-          const halfFrac = Math.min(0.45, (widthFt * UNITS_PER_FT / 2) / near.edgeLen);
-          const t = Math.max(halfFrac, Math.min(1 - halfFrac, near.t));
-          snapshot();
-          setScene(sc => ({ ...sc, openings: [...(sc.openings ?? []), { id: uid(), wallId: near.wallId, edge: near.edge, t, widthFt, kind: doorKind }] }));
-        }
-      }
-      else if (tool === 'reading') {
-        const editId = g.current.editId;
-        const cur = editId ? (scene.moisturePoints ?? []).find(m => m.id === editId) : null;
-        const value = prompt(`Reading for ${fmtDate(activeDate)} (e.g. 18%, WET, 45)`, cur ? pointDisplay(cur, activeDate) : '');
-        if (value != null && value.trim() !== '') {
-          snapshot();
-          const v = value.trim();
-          if (editId) setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(m => m.id === editId ? upsertReading(m, activeDate, v) : m) }));
-          else setScene(sc => ({ ...sc, moisturePoints: [...(sc.moisturePoints ?? []), { id: uid(), x: p[0], y: p[1], readings: [{ date: activeDate, value: v }] }] }));
-        }
-      }
+      commitPlace(active.scene, g.current.editId);
     }
     g.current.kind = 'idle'; g.current.id = undefined; g.current.idx = undefined; g.current.editId = undefined; g.current.wallTap = undefined; g.current.downScene = undefined;
     setActive(null); setGuide(null);
@@ -304,6 +284,69 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
   function undoPolyPoint() {
     setDraft(d => (d?.kind === 'poly' ? (d.pts.length <= 1 ? null : { kind: 'poly', pts: d.pts.slice(0, -1) }) : d));
   }
+
+  // Place the currently-armed item at a scene point (used by canvas taps AND
+  // by drag-and-drop from the palette).
+  function commitPlace(p: Pt, editId?: string) {
+    if (tool === 'equip') {
+      snapshot();
+      setScene(sc => ({ ...sc, equipment: [...sc.equipment, { id: uid(), type: equipType, x: p[0], y: p[1] }] }));
+    } else if (tool === 'door') {
+      const near = nearestWallEdge(scene, p[0], p[1]);
+      if (near && near.dist < 45 && near.edgeLen > UNITS_PER_FT) {
+        const widthFt = OPENING_DEFAULT_FT[doorKind];
+        const halfFrac = Math.min(0.45, (widthFt * UNITS_PER_FT / 2) / near.edgeLen);
+        const t = Math.max(halfFrac, Math.min(1 - halfFrac, near.t));
+        snapshot();
+        setScene(sc => ({ ...sc, openings: [...(sc.openings ?? []), { id: uid(), wallId: near.wallId, edge: near.edge, t, widthFt, kind: doorKind }] }));
+      }
+    } else if (tool === 'reading') {
+      const cur = editId ? (scene.moisturePoints ?? []).find(m => m.id === editId) : null;
+      const value = prompt(`Reading for ${fmtDate(activeDate)} (e.g. 18%, WET, 45)`, cur ? pointDisplay(cur, activeDate) : '');
+      if (value != null && value.trim() !== '') {
+        snapshot(); const v = value.trim();
+        if (editId) setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(m => m.id === editId ? upsertReading(m, activeDate, v) : m) }));
+        else setScene(sc => ({ ...sc, moisturePoints: [...(sc.moisturePoints ?? []), { id: uid(), x: p[0], y: p[1], readings: [{ date: activeDate, value: v }] }] }));
+      }
+    }
+  }
+
+  function pointInWrap(x: number, y: number) {
+    const el = wrapRef.current; if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  }
+  // --- drag straight out of the palette ---
+  function onPaletteDown(e: React.PointerEvent, item: { key: string; droppable: boolean; onSelect: () => void }) {
+    item.onSelect();                                  // arm (a plain tap still selects the tool)
+    if (!item.droppable) return;
+    pdrag.current = { id: e.pointerId, kind: item.key, startX: e.clientX, startY: e.clientY, dragging: false };
+  }
+  function onPaletteMove(e: React.PointerEvent) {
+    const d = pdrag.current; if (!d || e.pointerId !== d.id) return;
+    if (!d.dragging) {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 8) return;
+      d.dragging = true;
+      try { (e.currentTarget as HTMLElement).setPointerCapture(d.id); } catch (_e) {}
+    }
+    const over = pointInWrap(e.clientX, e.clientY);
+    if (over) {
+      const s = pxToScene(toPixel(e.clientX, e.clientY));
+      const { p, gx, gy } = snapPoint(s);
+      setActive({ scene: p, px: toPixel(e.clientX, e.clientY) });
+      setGuide(gx != null || gy != null ? { x: gx, y: gy } : null);
+    } else { setActive(null); setGuide(null); }
+    setPaletteGhost({ kind: d.kind, x: e.clientX, y: e.clientY, over });
+  }
+  function onPaletteUp(e: React.PointerEvent) {
+    const d = pdrag.current; if (!d || e.pointerId !== d.id) return;
+    if (d.dragging && pointInWrap(e.clientX, e.clientY)) {
+      const { p } = snapPoint(pxToScene(toPixel(e.clientX, e.clientY)));
+      commitPlace(p);
+    }
+    pdrag.current = null; setPaletteGhost(null); setActive(null); setGuide(null);
+  }
+  function onPaletteCancel() { pdrag.current = null; setPaletteGhost(null); setActive(null); setGuide(null); }
   function zoomBy(factor: number) {
     const v = viewRef.current; const cx = size.w / 2, cy = size.h / 2;
     const k = clampK(v.k * factor); const f = k / v.k;
@@ -351,16 +394,26 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
   };
 
   const activeKey = tool === 'equip' ? equipType : tool === 'door' ? doorKind : tool;
-  const PLACE_ITEMS: { key: string; label: string; onSelect: () => void }[] = [
-    { key: 'air_mover', label: 'Air Mover', onSelect: () => { setEquipType('air_mover'); selectTool('equip'); } },
-    { key: 'dehumidifier', label: 'Dehumidifier', onSelect: () => { setEquipType('dehumidifier'); selectTool('equip'); } },
-    { key: 'air_scrubber', label: 'Air Scrubber', onSelect: () => { setEquipType('air_scrubber'); selectTool('equip'); } },
-    { key: 'reading', label: 'Moisture Reading', onSelect: () => selectTool('reading') },
-    { key: 'arrow', label: 'Water Path', onSelect: () => selectTool('arrow') },
-    { key: 'door', label: 'Door', onSelect: () => { setDoorKind('door'); selectTool('door'); } },
-    { key: 'window', label: 'Window', onSelect: () => { setDoorKind('window'); selectTool('door'); } },
-    { key: 'opening', label: 'Opening', onSelect: () => { setDoorKind('opening'); selectTool('door'); } }
+  const PLACE_ITEMS: { key: string; label: string; droppable: boolean; onSelect: () => void }[] = [
+    { key: 'air_mover', label: 'Air Mover', droppable: true, onSelect: () => { setEquipType('air_mover'); selectTool('equip'); } },
+    { key: 'dehumidifier', label: 'Dehumidifier', droppable: true, onSelect: () => { setEquipType('dehumidifier'); selectTool('equip'); } },
+    { key: 'air_scrubber', label: 'Air Scrubber', droppable: true, onSelect: () => { setEquipType('air_scrubber'); selectTool('equip'); } },
+    { key: 'reading', label: 'Moisture Reading', droppable: true, onSelect: () => selectTool('reading') },
+    { key: 'arrow', label: 'Water Path', droppable: false, onSelect: () => selectTool('arrow') }
   ];
+
+  // Room tab: rectangle/custom shapes + structural openings (doors/windows live on walls).
+  const isRoom = tool === 'room' || tool === 'door';
+  const ROOM_ITEMS: { key: string; label: string }[] = [
+    { key: 'rect', label: 'Rectangle' }, { key: 'poly', label: 'Custom' },
+    { key: 'door', label: 'Door' }, { key: 'window', label: 'Window' }, { key: 'opening', label: 'Opening' }
+  ];
+  const activeRoomKey = tool === 'door' ? doorKind : tool === 'room' ? roomMode : '';
+  function pickRoom(key: string) {
+    setLastRoomKey(key);
+    if (key === 'rect' || key === 'poly') { setRoomMode(key as RoomMode); selectTool('room'); }
+    else { setDoorKind(key as OpeningKind); selectTool('door'); }
+  }
 
   // reusable canvas content (drawn in the main view and inside the loupe)
   const content = (
@@ -414,6 +467,32 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
         );
       })()}
       <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} />
+
+      {/* Drag ghost: a translucent preview of exactly what will be placed, where. */}
+      {active && tool === 'equip' && (
+        <g transform={`translate(${active.scene[0]},${active.scene[1]})`} opacity={0.5} style={{ pointerEvents: 'none' }}>
+          <circle r={26} fill={EQUIP_META[equipType].fill} stroke={EQUIP_META[equipType].ring} strokeWidth={3} />
+          <g transform="scale(2)"><EquipIcon type={equipType} /></g>
+        </g>
+      )}
+      {active && tool === 'reading' && (
+        <g transform={`translate(${active.scene[0]},${active.scene[1]})`} opacity={0.55} style={{ pointerEvents: 'none' }}>
+          <path d="M0 -30 C 17 -8 22 2 22 10 A22 22 0 1 1 -22 10 C -22 2 -17 -8 0 -30 Z" fill="#F26B3A" />
+        </g>
+      )}
+      {active && tool === 'door' && (() => {
+        const near = nearestWallEdge(scene, active.scene[0], active.scene[1]);
+        if (!near || near.dist >= 45) return null;
+        const w = wallById(scene, near.wallId); if (!w) return null;
+        const n = w.points.length;
+        const a = w.points[near.edge], b = w.points[(near.edge + 1) % n];
+        const ex = b[0] - a[0], ey = b[1] - a[1]; const len = Math.hypot(ex, ey) || 1;
+        const ux = ex / len, uy = ey / len;
+        const half = Math.min((OPENING_DEFAULT_FT[doorKind] * UNITS_PER_FT) / 2, len / 2);
+        const cx = a[0] + ux * near.t * len, cy = a[1] + uy * near.t * len;
+        return <line x1={cx - ux * half} y1={cy - uy * half} x2={cx + ux * half} y2={cy + uy * half}
+                     stroke="#1483C2" strokeWidth={12} strokeLinecap="round" opacity={0.6} style={{ pointerEvents: 'none' }} />;
+      })()}
     </>
   );
 
@@ -435,7 +514,10 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
     <div className="fixed inset-0 z-50 bg-[#F4F7FB] flex flex-col select-none">
       <div className="safe-top bg-white border-b border-gray-100 flex items-center px-2 pb-2 gap-1">
         <button onClick={() => onClose(false)} className="p-2 rounded-xl active:bg-gray-100"><X size={22} /></button>
-        <div className="flex-1 text-center font-display font-bold text-[15px]">Moisture Map</div>
+        <div className="flex-1 text-center px-1 min-w-0">
+          <div className="font-display font-bold text-[15px] truncate">{roomName || 'Moisture Map'}</div>
+          {roomName && <div className="text-[10px] font-semibold text-gray-400 -mt-0.5">Moisture Map</div>}
+        </div>
         <button onClick={() => setShowGrid(v => !v)} className={`p-2 rounded-xl active:bg-gray-100 ${showGrid ? 'text-sky' : 'text-gray-400'}`}><Grid3x3 size={20} /></button>
         <button onClick={undo} disabled={!history.length} className="p-2 rounded-xl active:bg-gray-100 disabled:opacity-30"><Undo2 size={20} /></button>
         <button onClick={save} disabled={saving} className="ml-1 btn-primary py-2 px-4 text-sm disabled:opacity-50"><Save size={16} /> Save</button>
@@ -531,12 +613,12 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
         )}
       </div>
 
-      {tool === 'room' && (
+      {isRoom && (
         <div className="flex items-center gap-2 px-3 py-1.5 bg-white border-t border-gray-100 overflow-x-auto">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Shape</span>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Room</span>
           <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-            {(['rect', 'poly'] as RoomMode[]).map(m => (
-              <button key={m} onClick={() => setRoomMode(m)} className={`px-3.5 py-1 rounded-full text-xs font-bold ${roomMode === m ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{m === 'rect' ? 'Rectangle' : 'Custom'}</button>
+            {ROOM_ITEMS.map(it => (
+              <button key={it.key} onClick={() => pickRoom(it.key)} className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap ${activeRoomKey === it.key ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{it.label}</button>
             ))}
           </div>
         </div>
@@ -547,7 +629,10 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
           {PLACE_ITEMS.map(it => {
             const on = activeKey === it.key;
             return (
-              <button key={it.key} onClick={it.onSelect}
+              <button key={it.key}
+                onPointerDown={e => onPaletteDown(e, it)} onPointerMove={onPaletteMove}
+                onPointerUp={onPaletteUp} onPointerCancel={onPaletteCancel}
+                style={{ touchAction: 'pan-x' }}
                 className={`shrink-0 w-[74px] flex flex-col items-center gap-1 py-1.5 rounded-2xl ${on ? 'bg-sky-soft ring-1 ring-sky/40' : 'active:bg-gray-50'}`}>
                 <PlaceGlyph kind={it.key} />
                 <span className={`text-[10.5px] font-semibold leading-tight text-center ${on ? 'text-sky-deep' : 'text-gray-500'}`}>{it.label}</span>
@@ -561,21 +646,31 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
         {tool === 'move' && 'Drag a corner to reshape. Drag items to move. Tap a room to label its material.'}
         {tool === 'room' && (roomMode === 'poly' ? 'Tap each corner. Tap the first point or Close to finish. Two fingers to pan and zoom.' : 'Drag a box from the anchor corner. Snaps to grid and existing corners.')}
         {tool === 'wet' && 'Drag to outline the wet area. Two fingers to pan and zoom.'}
-        {tool === 'equip' && 'Press and drag to position, release to drop. Two fingers to pan.'}
+        {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
         {tool === 'arrow' && 'Drag from the water source toward where it traveled.'}
-        {tool === 'door' && `Tap a wall to place a ${doorKind}.`}
+        {tool === 'door' && `Drag along a wall to position the ${doorKind}. The highlight shows where it attaches.`}
       </div>
 
       <nav className="safe-bottom bg-white border-t border-gray-100 flex">
         <Tab t="move" icon={Move} label="Move" />
-        <Tab t="room" icon={Square} label="Room" />
+        <button onClick={() => pickRoom(lastRoomKey)}
+          className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold ${isRoom ? 'text-sky' : 'text-gray-400'}`}>
+          <Square size={20} strokeWidth={isRoom ? 2.6 : 2} /> Room
+        </button>
         <Tab t="wet" icon={Droplet} label="Water" />
         <button onClick={() => selectTool(lastPlace)}
           className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold ${isPlace ? 'text-sky' : 'text-gray-400'}`}>
           <MapPin size={20} strokeWidth={isPlace ? 2.6 : 2} /> Place
         </button>
       </nav>
+
+      {paletteGhost && !paletteGhost.over && (
+        <div className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-1/2 opacity-80 drop-shadow-lg"
+             style={{ left: paletteGhost.x, top: paletteGhost.y }}>
+          <PlaceGlyph kind={paletteGhost.kind} />
+        </div>
+      )}
     </div>
   );
 }
