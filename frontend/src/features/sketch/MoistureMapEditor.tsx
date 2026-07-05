@@ -16,7 +16,7 @@ interface SketchRow { id: string; canvas_json: any; }
 const PLACE_SET: Tool[] = ['equip', 'reading', 'arrow'];   // grouped under the Place tab
 const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
-const OFF = 34; // offset-cursor: place target up-left of the finger so it's never under the thumb
+const OFF = 50; // offset-cursor: place target up-left of the finger so it's never under the thumb
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
@@ -82,7 +82,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -155,29 +155,28 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       return;
     }
     const px = toPixel(e.clientX, e.clientY); const s = pxToScene(px);
-    g.current.downPx = px; g.current.lastPx = px; g.current.moved = false; g.current.downScene = s;
+    const pxO = toPixel(e.clientX - OFF, e.clientY - OFF); const sO = pxToScene(pxO);
+    g.current.downPx = px; g.current.lastPx = px; g.current.moved = false; g.current.downScene = sO; g.current.grab = undefined;
 
     if (tool === 'move') {
       const h = hitHandle(s);
       const ep = h ? null : hitEquipment(scene, s[0], s[1]);
       const mp = h || ep ? null : hitPoint(scene, s[0], s[1]);
-      if (h) { snapshot(); g.current.kind = 'handle'; g.current.id = h.id; g.current.idx = h.idx; setSelectedId(null); showActive(s, px, { id: h.id, idx: h.idx }); }
-      else if (ep) { snapshot(); setSelectedId(ep.id); g.current.kind = 'dragEquip'; g.current.id = ep.id; showActive(s, px); }
-      else if (mp) { snapshot(); setSelectedId(mp.id); g.current.kind = 'dragPoint'; g.current.id = mp.id; showActive(s, px); }
+      if (h) { snapshot(); g.current.kind = 'handle'; g.current.id = h.id; g.current.idx = h.idx; setSelectedId(null); const c = scene.walls.find(w => w.id === h.id)!.points[h.idx]; g.current.grab = [c[0] - sO[0], c[1] - sO[1]]; showActive([c[0], c[1]], pxO, { id: h.id, idx: h.idx }); }
+      else if (ep) { snapshot(); setSelectedId(ep.id); g.current.kind = 'dragEquip'; g.current.id = ep.id; g.current.grab = [ep.x - sO[0], ep.y - sO[1]]; showActive([ep.x, ep.y], pxO); }
+      else if (mp) { snapshot(); setSelectedId(mp.id); g.current.kind = 'dragPoint'; g.current.id = mp.id; g.current.grab = [mp.x - sO[0], mp.y - sO[1]]; showActive([mp.x, mp.y], pxO); }
       else { const opn = hitOpening(scene, s[0], s[1]); const ar = opn ? null : hitArrow(scene, s[0], s[1]); if (opn) { setSelectedId(opn.id); g.current.kind = 'pan'; } else if (ar) { setSelectedId(ar.id); g.current.kind = 'pan'; } else { const w = hitWall(scene, s[0], s[1]); g.current.wallTap = w?.id; setSelectedId(w?.id ?? null); g.current.kind = 'pan'; } }
     } else if (tool === 'room') {
-      if (roomMode === 'poly') { g.current.kind = 'polyTap'; showActive(s, px); }
-      else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
+      if (roomMode === 'poly') { g.current.kind = 'polyTap'; showActive(sO, pxO); }
+      else { const { p } = snapPoint(sO); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(sO, pxO); }
     } else if (tool === 'wet') {
-      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] });
+      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] });
     } else if (tool === 'arrow') {
-      const { p } = snapPoint(s); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(s, px);
+      const { p } = snapPoint(sO); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(sO, pxO);
     } else {
       g.current.kind = 'place';
-      const opx = toPixel(e.clientX - OFF, e.clientY - OFF);
-      const os = pxToScene(opx);
-      g.current.editId = tool === 'reading' ? hitPoint(scene, os[0], os[1])?.id : undefined;
-      showActive(os, opx);
+      g.current.editId = tool === 'reading' ? hitPoint(scene, sO[0], sO[1])?.id : undefined;
+      showActive(sO, pxO);
     }
   }
 
@@ -195,23 +194,27 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     const px = toPixel(e.clientX, e.clientY);
     const dx = px[0] - g.current.lastPx[0], dy = px[1] - g.current.lastPx[1];
     if (!g.current.moved && Math.hypot(px[0] - g.current.downPx[0], px[1] - g.current.downPx[1]) > 4) g.current.moved = true;
-    const s = pxToScene(px);
+    const pxO = toPixel(e.clientX - OFF, e.clientY - OFF); const sO = pxToScene(pxO);
+    const gb = g.current.grab;
 
     if (g.current.kind === 'pan') { setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); }
-    else if (g.current.kind === 'rect') { const p = showActive(s, px); setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d)); }
-    else if (g.current.kind === 'arrow') { const p = showActive(s, px); setDraft(d => (d && d.kind === 'arrow' ? { ...d, to: p } : d)); }
+    else if (g.current.kind === 'rect') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d)); }
+    else if (g.current.kind === 'arrow') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'arrow' ? { ...d, to: p } : d)); }
     else if (g.current.kind === 'handle' && g.current.id != null) {
-      const p = showActive(s, px, { id: g.current.id, idx: g.current.idx! }); const id = g.current.id, idx = g.current.idx!;
+      const t: Pt = gb ? [sO[0] + gb[0], sO[1] + gb[1]] : sO;
+      const p = showActive(t, pxO, { id: g.current.id, idx: g.current.idx! }); const id = g.current.id, idx = g.current.idx!;
       setScene(sc => ({ ...sc, walls: sc.walls.map(w => w.id === id ? { ...w, points: w.points.map((q, i) => i === idx ? p : q) } : w) }));
     } else if (g.current.kind === 'dragEquip' && g.current.id) {
-      const p = showActive(s, px); const id = g.current.id;
+      const t: Pt = gb ? [sO[0] + gb[0], sO[1] + gb[1]] : sO;
+      const p = showActive(t, pxO); const id = g.current.id;
       setScene(sc => ({ ...sc, equipment: sc.equipment.map(q => q.id === id ? { ...q, x: p[0], y: p[1] } : q) }));
     } else if (g.current.kind === 'dragPoint' && g.current.id) {
-      const p = showActive(s, px); const id = g.current.id;
+      const t: Pt = gb ? [sO[0] + gb[0], sO[1] + gb[1]] : sO;
+      const p = showActive(t, pxO); const id = g.current.id;
       setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(q => q.id === id ? { ...q, x: p[0], y: p[1] } : q) }));
-    } else if (g.current.kind === 'place') { const opx = toPixel(e.clientX - OFF, e.clientY - OFF); showActive(pxToScene(opx), opx); }
-    else if (g.current.kind === 'wet') { setDraft(d => (d && d.kind === 'wet' ? { ...d, pts: [...d.pts, s] } : d)); }
-    else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(s, px); } }
+    } else if (g.current.kind === 'place') { showActive(sO, pxO); }
+    else if (g.current.kind === 'wet') { setDraft(d => (d && d.kind === 'wet' ? { ...d, pts: [...d.pts, sO] } : d)); }
+    else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
     g.current.lastPx = px;
   }
 
@@ -377,8 +380,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const drawReadout = rectDraft
     ? `${ftLabel(rw)} \u00d7 ${ftLabel(rh)} \u00b7 ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
     : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 tap first point to close' : ''}` : null;
-  const isPlacing = tool === 'equip' || tool === 'reading' || tool === 'door';
-  const fingerScene = active && isPlacing ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
+  const fingerScene = active ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
     am: scene.equipment.filter(e => e.type === 'air_mover').length,
     dh: scene.equipment.filter(e => e.type === 'dehumidifier').length,
@@ -515,12 +517,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     </button>
   );
 
-  // loupe geometry (screen/pixel space)
-  const R = 54;
-  const lx = active ? active.px[0] : 0;
-  let ly = active ? active.px[1] - 96 : 0;
-  if (active && ly < R + 10) ly = active.px[1] + 96;
-  const lk = k * 2.4;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#F4F7FB] flex flex-col select-none">
@@ -586,18 +582,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
             )))}
           </g>
 
-          {active && (
-            <>
-              <defs><clipPath id="loupeClip"><circle cx={lx} cy={ly} r={R} /></clipPath></defs>
-              <g clipPath="url(#loupeClip)">
-                <rect x={lx - R} y={ly - R} width={R * 2} height={R * 2} fill="#F4F7FB" />
-                <g transform={`translate(${lx} ${ly}) scale(${lk}) translate(${-active.scene[0]} ${-active.scene[1]})`}>{content}</g>
-                <line x1={lx - 12} y1={ly} x2={lx + 12} y2={ly} stroke="#F26B3A" strokeWidth={1.5} />
-                <line x1={lx} y1={ly - 12} x2={lx} y2={ly + 12} stroke="#F26B3A" strokeWidth={1.5} />
-              </g>
-              <circle cx={lx} cy={ly} r={R} fill="none" stroke="#0E2A4D" strokeWidth={3} />
-            </>
-          )}
         </svg>
 
         {drawReadout && (
