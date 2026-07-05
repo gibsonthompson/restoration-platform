@@ -170,7 +170,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       else if (mp) { snapshot(); setSelectedId(mp.id); g.current.kind = 'dragPoint'; g.current.id = mp.id; g.current.grab = [mp.x - sO[0], mp.y - sO[1]]; showActive([mp.x, mp.y], pxO); }
       else { const opn = hitOpening(scene, s[0], s[1]); const ar = opn ? null : hitArrow(scene, s[0], s[1]); if (opn) { setSelectedId(opn.id); g.current.kind = 'pan'; } else if (ar) { setSelectedId(ar.id); g.current.kind = 'pan'; } else { const w = hitWall(scene, s[0], s[1]); g.current.wallTap = w?.id; setSelectedId(w?.id ?? null); g.current.kind = 'pan'; } }
     } else if (tool === 'room') {
-      if (roomMode === 'poly') { g.current.kind = 'polyTap'; showActive(sO, pxO); }
+      if (roomMode === 'poly') { g.current.kind = 'pan'; }   // Custom = crosshair method: single finger pans, Add-corner button drops vertices
       else { const { p } = snapPoint(sO); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(sO, pxO); }
     } else if (tool === 'wet') {
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] });
@@ -308,6 +308,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
     setDraft(null); setActive(null); setGuide(null);
   }
+  function addPolyCorner() {
+    if (!size.w) return;
+    const p = snapPoint(pxToScene([size.w / 2, size.h / 2])).p;
+    const d = draft;
+    if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 40) {
+      snapshot(); const pts = d.pts;
+      setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
+      setDraft(null);
+    } else {
+      setDraft(d?.kind === 'poly' ? { kind: 'poly', pts: [...d.pts, p] } : { kind: 'poly', pts: [p] });
+    }
+  }
   function undoPolyPoint() {
     setDraft(d => (d?.kind === 'poly' ? (d.pts.length <= 1 ? null : { kind: 'poly', pts: d.pts.slice(0, -1) }) : d));
   }
@@ -395,14 +407,21 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   }
 
   const k = view.k;
-  const gridLines = showGrid ? Array.from({ length: Math.floor(SCENE_SIZE / GRID) + 1 }, (_, i) => i * GRID) : [];
+  const vMinX = -view.tx / k, vMinY = -view.ty / k, vMaxX = (size.w - view.tx) / k, vMaxY = (size.h - view.ty) / k;
+  const gxs: number[] = [], gys: number[] = [];
+  if (showGrid && k > 0.015) {
+    for (let x = Math.floor(vMinX / GRID) * GRID; x <= vMaxX; x += GRID) gxs.push(x);
+    for (let y = Math.floor(vMinY / GRID) * GRID; y <= vMaxY; y += GRID) gys.push(y);
+  }
+  const isCustom = tool === 'room' && roomMode === 'poly';
+  const chScene = isCustom && size.w ? snapPoint(pxToScene([size.w / 2, size.h / 2])).p : null;
   const rectDraft = draft?.kind === 'rect' ? draft : null;
   const rx = rectDraft ? Math.min(rectDraft.a[0], rectDraft.b[0]) : 0, ry = rectDraft ? Math.min(rectDraft.a[1], rectDraft.b[1]) : 0;
   const rw = rectDraft ? Math.abs(rectDraft.b[0] - rectDraft.a[0]) : 0, rh = rectDraft ? Math.abs(rectDraft.b[1] - rectDraft.a[1]) : 0;
   const polyDraft = draft?.kind === 'poly' ? draft : null;
   const drawReadout = rectDraft
     ? `${ftLabel(rw)} \u00d7 ${ftLabel(rh)} \u00b7 ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
-    : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 tap first point to close' : ''}` : null;
+    : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 aim at the first corner to close' : ''}` : null;
   const fingerScene = active ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
     am: scene.equipment.filter(e => e.type === 'air_mover').length,
@@ -451,13 +470,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   // reusable canvas content (drawn in the main view and inside the loupe)
   const content = (
     <>
-      {gridLines.map(gp => (
-        <g key={gp} stroke="#DCE6F1" vectorEffect="non-scaling-stroke" strokeWidth={1}>
-          <line x1={gp} y1={0} x2={gp} y2={SCENE_SIZE} /><line x1={0} y1={gp} x2={SCENE_SIZE} y2={gp} />
-        </g>
-      ))}
-      {guide?.x != null && <line x1={guide.x} y1={0} x2={guide.x} y2={SCENE_SIZE} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
-      {guide?.y != null && <line x1={0} y1={guide.y} x2={SCENE_SIZE} y2={guide.y} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
+      <g stroke="#DCE6F1" vectorEffect="non-scaling-stroke" strokeWidth={1}>
+        {gxs.map(x => <line key={'gx' + x} x1={x} y1={vMinY} x2={x} y2={vMaxY} />)}
+        {gys.map(y => <line key={'gy' + y} x1={vMinX} y1={y} x2={vMaxX} y2={y} />)}
+      </g>
+      {guide?.x != null && <line x1={guide.x} y1={vMinY} x2={guide.x} y2={vMaxY} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
+      {guide?.y != null && <line x1={vMinX} y1={guide.y} x2={vMaxX} y2={guide.y} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
       {draft?.kind === 'wet' && draft.pts.length > 1 && (
         <path d={smoothClosedPath(draft.pts)} fill="#7DD3FC" fillOpacity={0.4} stroke="#0284c7" strokeWidth={3} vectorEffect="non-scaling-stroke" />
       )}
@@ -607,11 +625,26 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           <rect x={0} y={0} width={size.w} height={size.h} fill="#F4F7FB" />
           <g transform={`translate(${view.tx} ${view.ty}) scale(${k})`}>
             {content}
+            {isCustom && chScene && (
+              <g style={{ pointerEvents: 'none' }}>
+                {polyDraft && polyDraft.pts.length > 0 && (
+                  <line x1={polyDraft.pts[polyDraft.pts.length - 1][0]} y1={polyDraft.pts[polyDraft.pts.length - 1][1]} x2={chScene[0]} y2={chScene[1]} stroke="#1483C2" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeDasharray="6 5" opacity={0.7} />
+                )}
+                <circle cx={chScene[0]} cy={chScene[1]} r={6 / k} fill="#1483C2" fillOpacity={0.35} stroke="#1483C2" strokeWidth={2 / k} />
+              </g>
+            )}
             {tool === 'move' && scene.walls.flatMap(w => w.points.map((pt, i) => (
               <circle key={w.id + '-' + i} cx={pt[0]} cy={pt[1]} r={7 / k} fill="#fff" stroke="#0E2A4D" strokeWidth={2 / k} />
             )))}
           </g>
 
+          {isCustom && (
+            <g style={{ pointerEvents: 'none' }}>
+              <line x1={(size.w || 1) / 2 - 15} y1={(size.h || 1) / 2} x2={(size.w || 1) / 2 + 15} y2={(size.h || 1) / 2} stroke="#1483C2" strokeWidth={2} />
+              <line x1={(size.w || 1) / 2} y1={(size.h || 1) / 2 - 15} x2={(size.w || 1) / 2} y2={(size.h || 1) / 2 + 15} stroke="#1483C2" strokeWidth={2} />
+              <circle cx={(size.w || 1) / 2} cy={(size.h || 1) / 2} r={11} fill="none" stroke="#1483C2" strokeWidth={2} />
+            </g>
+          )}
         </svg>
 
         {drawReadout && (
@@ -628,11 +661,14 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         {tool === 'move' && selectedId && (
           <button onClick={deleteSelected} className="absolute left-3 bottom-3 bg-red-600 text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><Trash2 size={16} /> Delete</button>
         )}
-        {polyDraft && (
-          <div className="absolute left-3 bottom-3 flex gap-2">
-            <button onClick={undoPolyPoint} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft active:scale-95">Undo point</button>
-            {polyDraft.pts.length >= 3 && (
-              <button onClick={closePoly} className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft active:scale-95">Close shape</button>
+        {isCustom && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
+            {polyDraft && polyDraft.pts.length > 0 && (
+              <button onClick={undoPolyPoint} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft active:scale-95">Undo</button>
+            )}
+            <button onClick={addPolyCorner} className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-6 py-3 text-sm font-extrabold shadow-lg active:scale-95">+ Add corner</button>
+            {polyDraft && polyDraft.pts.length >= 3 && (
+              <button onClick={closePoly} className="bg-navy text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft active:scale-95">Close</button>
             )}
           </div>
         )}
@@ -716,7 +752,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
         {tool === 'move' && 'Drag a corner to reshape. Drag items to move. Tap a room to label its material.'}
-        {tool === 'room' && (roomMode === 'poly' ? 'Tap each corner. Tap the first point or Close to finish. Two fingers to pan and zoom.' : 'Drag a box from the anchor corner. Snaps to grid and existing corners.')}
+        {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Drag to pan, pinch to zoom.' : 'Drag a box from the anchor corner. Snaps to grid and existing corners.')}
         {tool === 'wet' && 'Drag to outline the wet area. Two fingers to pan and zoom.'}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
