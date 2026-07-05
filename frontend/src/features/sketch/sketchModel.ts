@@ -6,6 +6,9 @@ export type EquipType = 'air_mover' | 'dehumidifier' | 'air_scrubber';
 export type Pt = [number, number];
 
 export interface Poly { id: string; points: Pt[]; material?: string; }   // material: affected surface (S500)
+// Xactimate-shaped demo/prep scope, measured from sketch geometry:
+export interface FloodCut { wallId: string; edge: number; heightFt: number; }         // DRYW flood-cut: LF x height
+export interface Containment { id: string; from: Pt; to: Pt; heightFt: number; }        // PLASTIC barrier: width x height
 export interface Equip { id: string; type: EquipType; x: number; y: number; }
 export interface Arrow { id: string; from: Pt; to: Pt; }   // water migration direction (S500)
 export type OpeningKind = 'door' | 'opening' | 'window';
@@ -21,6 +24,8 @@ export interface Scene {
   arrows?: Arrow[];          // water migration arrows
   openings?: Opening[];      // doors / cased openings / windows on wall edges
   classOfLoss?: number;      // IICRC S500 class 1-4 (drives equipment suggestion)
+  floodCuts?: FloodCut[];
+  containments?: Containment[];
 }
 
 export const SCENE_SIZE = 1000;
@@ -42,6 +47,8 @@ export const normalizeScene = (s: any): Scene => ({
   equipment: s?.equipment ?? [],
   moisturePoints: (s?.moisturePoints ?? []).map(normPoint),
   arrows: s?.arrows ?? [],
+  floodCuts: s?.floodCuts ?? [],
+  containments: s?.containments ?? [],
   openings: s?.openings ?? [],
   classOfLoss: s?.classOfLoss ?? undefined
 });
@@ -210,4 +217,38 @@ export function nearestWallEdge(scene: Scene, x: number, y: number): { wallId: s
     }
   }
   return best;
+}
+
+// --- flood cut + containment geometry (measured for Xactimate) ---
+export function edgePoints(scene: Scene, wallId: string, edge: number): [Pt, Pt] | null {
+  const w = wallById(scene, wallId); if (!w) return null;
+  const n = w.points.length;
+  return [w.points[edge], w.points[(edge + 1) % n]];
+}
+// unit normal pointing INTO the room (toward the polygon centroid)
+export function edgeInwardNormal(scene: Scene, wallId: string, edge: number): Pt {
+  const w = wallById(scene, wallId); const ep = edgePoints(scene, wallId, edge);
+  if (!w || !ep) return [0, 0];
+  const [a, b] = ep; const dx = b[0] - a[0], dy = b[1] - a[1]; const len = Math.hypot(dx, dy) || 1;
+  let nx = -dy / len, ny = dx / len;
+  const c = polygonCentroid(w.points); const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+  if ((c[0] - mx) * nx + (c[1] - my) * ny < 0) { nx = -nx; ny = -ny; }
+  return [nx, ny];
+}
+export function hasFloodCut(scene: Scene, wallId: string, edge: number): boolean {
+  return (scene.floodCuts ?? []).some(f => f.wallId === wallId && f.edge === edge);
+}
+export function floodCutStats(scene: Scene): { lf: number; sqft: number } {
+  let lf = 0, sqft = 0;
+  for (const fc of scene.floodCuts ?? []) {
+    const ep = edgePoints(scene, fc.wallId, fc.edge); if (!ep) continue;
+    const len = Math.hypot(ep[1][0] - ep[0][0], ep[1][1] - ep[0][1]) / UNITS_PER_FT;
+    lf += len; sqft += len * fc.heightFt;
+  }
+  return { lf, sqft };
+}
+export function containmentStats(scene: Scene): { sqft: number; count: number } {
+  let sqft = 0; const list = scene.containments ?? [];
+  for (const c of list) sqft += (Math.hypot(c.to[0] - c.from[0], c.to[1] - c.from[1]) / UNITS_PER_FT) * c.heightFt;
+  return { sqft, count: list.length };
 }

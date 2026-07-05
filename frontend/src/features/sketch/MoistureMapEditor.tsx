@@ -1,15 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Undo2, Save, Move, Square, Droplet, Grid3x3, Plus, Minus, Trash2, MapPin } from 'lucide-react';
+import { X, Undo2, Save, Move, Square, Droplet, Grid3x3, Plus, Minus, Trash2, MapPin, Ruler } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import {
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
-  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
+  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
-type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door';
+type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment';
 type RoomMode = 'rect' | 'poly';
-type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap';
+type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap';
 interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
 
@@ -64,13 +64,16 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const [doorKind, setDoorKind] = useState<OpeningKind>('door');
   const [roomMode, setRoomMode] = useState<RoomMode>('rect');
   const [lastRoomKey, setLastRoomKey] = useState<string>('rect');
+  const [floodHeight, setFloodHeight] = useState(2);
+  const [containHeight, setContainHeight] = useState(8);
+  const [lastScope, setLastScope] = useState<Tool>('floodcut');
   const [lastPlace, setLastPlace] = useState<Tool>('equip');   // remembers the last Place sub-tool
   const [showGrid, setShowGrid] = useState(true);
   const [activeDate, setActiveDate] = useState<string>(todayISO());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<View>({ tx: 0, ty: 0, k: 1 });
-  const [draft, setDraft] = useState<{ kind: 'rect'; a: Pt; b: Pt } | { kind: 'wet'; pts: Pt[] } | { kind: 'arrow'; from: Pt; to: Pt } | { kind: 'poly'; pts: Pt[] } | null>(null);
+  const [draft, setDraft] = useState<{ kind: 'rect'; a: Pt; b: Pt } | { kind: 'wet'; pts: Pt[] } | { kind: 'arrow'; from: Pt; to: Pt } | { kind: 'poly'; pts: Pt[] } | { kind: 'containment'; from: Pt; to: Pt } | null>(null);
   const [active, setActive] = useState<{ scene: Pt; px: Pt } | null>(null);
   const [guide, setGuide] = useState<{ x?: number; y?: number } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -82,7 +85,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number } }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -173,6 +176,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] });
     } else if (tool === 'arrow') {
       const { p } = snapPoint(sO); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(sO, pxO);
+    } else if (tool === 'floodcut') {
+      g.current.kind = 'floodTap';
+      const near = nearestWallEdge(scene, s[0], s[1]);
+      g.current.floodEdge = near && near.dist < 45 ? { wallId: near.wallId, edge: near.edge } : undefined;
+    } else if (tool === 'containment') {
+      const { p } = snapPoint(sO); g.current.kind = 'containDraw'; setDraft({ kind: 'containment', from: p, to: p }); showActive(sO, pxO);
     } else {
       g.current.kind = 'place';
       g.current.editId = tool === 'reading' ? hitPoint(scene, sO[0], sO[1])?.id : undefined;
@@ -215,6 +224,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     } else if (g.current.kind === 'place') { showActive(sO, pxO); }
     else if (g.current.kind === 'wet') { setDraft(d => (d && d.kind === 'wet' ? { ...d, pts: [...d.pts, sO] } : d)); }
     else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
+    else if (g.current.kind === 'containDraw') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'containment' ? { ...d, to: p } : d)); }
+    else if (g.current.kind === 'floodTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } }
     g.current.lastPx = px;
   }
 
@@ -242,6 +253,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       const { from, to } = draft;
       if (Math.hypot(to[0] - from[0], to[1] - from[1]) >= GRID) { snapshot(); setScene(sc => ({ ...sc, arrows: [...(sc.arrows ?? []), { id: uid(), from, to }] })); }
       setDraft(null);
+    } else if (g.current.kind === 'containDraw' && draft?.kind === 'containment') {
+      const { from, to } = draft;
+      if (Math.hypot(to[0] - from[0], to[1] - from[1]) >= GRID) { snapshot(); setScene(sc => ({ ...sc, containments: [...(sc.containments ?? []), { id: uid(), from, to, heightFt: containHeight }] })); }
+      setDraft(null);
+    } else if (g.current.kind === 'floodTap' && !g.current.moved && g.current.floodEdge) {
+      const fe = g.current.floodEdge; snapshot();
+      setScene(sc => {
+        const exists = (sc.floodCuts ?? []).some(f => f.wallId === fe.wallId && f.edge === fe.edge);
+        return { ...sc, floodCuts: exists
+          ? (sc.floodCuts ?? []).filter(f => !(f.wallId === fe.wallId && f.edge === fe.edge))
+          : [...(sc.floodCuts ?? []), { wallId: fe.wallId, edge: fe.edge, heightFt: floodHeight }] };
+      });
     } else if (g.current.kind === 'polyTap' && !g.current.moved) {
       const { p } = snapPoint(g.current.downScene!);
       const d = draft;
@@ -395,6 +418,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const selectTool = (t: Tool) => {
     setTool(t);
     if (PLACE_SET.includes(t)) setLastPlace(t);
+    if (t === 'floodcut' || t === 'containment') setLastScope(t);
     setSelectedId(null); setDraft(null); setActive(null); setGuide(null);
   };
 
@@ -409,6 +433,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
 
   // Room tab: rectangle/custom shapes + structural openings (doors/windows live on walls).
   const isRoom = tool === 'room' || tool === 'door';
+  const isScope = tool === 'floodcut' || tool === 'containment';
+  const fcStats = floodCutStats(scene);
+  const cStats = containmentStats(scene);
   const OPENING_ITEMS: { key: string; label: string; droppable: boolean; onSelect: () => void }[] = [
     { key: 'door', label: 'Door', droppable: true, onSelect: () => { setDoorKind('door'); selectTool('door'); } },
     { key: 'window', label: 'Window', droppable: true, onSelect: () => { setDoorKind('window'); selectTool('door'); } },
@@ -474,6 +501,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       })()}
       <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} />
 
+      {draft?.kind === 'containment' && (
+        <line x1={draft.from[0]} y1={draft.from[1]} x2={draft.to[0]} y2={draft.to[1]} stroke="#8B5CF6" strokeWidth={9} strokeLinecap="round" strokeDasharray="3 8" opacity={0.7} />
+      )}
       {/* Offset-cursor connector: shows your finger point and the target it maps to. */}
       {fingerScene && (
         <g style={{ pointerEvents: 'none' }}>
@@ -608,6 +638,36 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         )}
       </div>
 
+      {isScope && (
+        <div className="bg-white border-t border-gray-100">
+          <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+            <div className="flex flex-1 bg-gray-100 rounded-full p-0.5">
+              {([['floodcut', 'Flood cut'], ['containment', 'Containment']] as [Tool, string][]).map(([t, l]) => (
+                <button key={t} onClick={() => selectTool(t)} className={`flex-1 py-1 rounded-full text-xs font-bold ${tool === t ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{l}</button>
+              ))}
+            </div>
+          </div>
+          {tool === 'floodcut' && (
+            <div className="flex items-center gap-1.5 px-3 pb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Height</span>
+              {[2, 4].map(h => (
+                <button key={h} onClick={() => setFloodHeight(h)} className={`px-2.5 py-1 rounded-full text-xs font-bold ${floodHeight === h ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>{h} ft</button>
+              ))}
+              <button onClick={() => { const v = prompt('Cut height in feet', String(floodHeight)); const n = v ? parseFloat(v) : NaN; if (n > 0) setFloodHeight(n); }} className={`px-2.5 py-1 rounded-full text-xs font-bold ${floodHeight !== 2 && floodHeight !== 4 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>Custom</button>
+              <span className="ml-auto text-[12px] font-extrabold text-amber-700 whitespace-nowrap">{fcStats.lf.toFixed(0)} LF \u00b7 {fcStats.sqft.toFixed(0)} sq ft</span>
+            </div>
+          )}
+          {tool === 'containment' && (
+            <div className="flex items-center gap-1.5 px-3 pb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Height</span>
+              <button onClick={() => setContainHeight(8)} className={`px-2.5 py-1 rounded-full text-xs font-bold ${containHeight === 8 ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>8 ft</button>
+              <button onClick={() => { const v = prompt('Barrier height in feet', String(containHeight)); const n = v ? parseFloat(v) : NaN; if (n > 0) setContainHeight(n); }} className={`px-2.5 py-1 rounded-full text-xs font-bold ${containHeight !== 8 ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>Custom</button>
+              <span className="ml-auto text-[12px] font-extrabold text-violet-700 whitespace-nowrap">{cStats.count} barrier{cStats.count === 1 ? '' : 's'} \u00b7 {cStats.sqft.toFixed(0)} sq ft</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {isRoom && (
         <div className="bg-white border-t border-gray-100">
           <div className="flex items-center gap-2 px-3 pt-2 pb-1">
@@ -662,6 +722,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
         {tool === 'arrow' && 'Drag from the water source toward where it traveled.'}
         {tool === 'door' && `Drag along a wall to position the ${doorKind}. The highlight shows where it attaches.`}
+        {tool === 'floodcut' && 'Tap the walls that were flood-cut. Tap again to remove one.'}
+        {tool === 'containment' && 'Drag a poly barrier across a doorway or opening.'}
       </div>
 
       <nav className="safe-bottom bg-white border-t border-gray-100 flex">
@@ -671,6 +733,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           <Square size={20} strokeWidth={isRoom ? 2.6 : 2} /> Room
         </button>
         <Tab t="wet" icon={Droplet} label="Water" />
+        <button onClick={() => selectTool(lastScope)}
+          className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold ${isScope ? 'text-sky' : 'text-gray-400'}`}>
+          <Ruler size={20} strokeWidth={isScope ? 2.6 : 2} /> Scope
+        </button>
         <button onClick={() => selectTool(lastPlace)}
           className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold ${isPlace ? 'text-sky' : 'text-gray-400'}`}>
           <MapPin size={20} strokeWidth={isPlace ? 2.6 : 2} /> Place
