@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Undo2, Save, Move, Square, Droplet, Wind, Gauge, Grid3x3, Plus, Minus, Trash2, ArrowUpRight, DoorOpen, MapPin } from 'lucide-react';
+import { X, Undo2, Save, Move, Square, Droplet, Grid3x3, Plus, Minus, Trash2, MapPin } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers } from './SceneLayers';
 import {
@@ -18,6 +18,40 @@ const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
+
+const FAN = 'M0 0 C 2.6 -1.2 4.4 -4.4 2.5 -8.4 C 1 -6 -0.6 -3 0 0 Z';
+// Palette stickers — the same icons that get placed on the map, so a tech sees
+// exactly what they're adding. Full names live on the buttons (no abbreviations).
+function PlaceGlyph({ kind }: { kind: string }) {
+  if (kind === 'air_mover') return (
+    <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#29ABE6" stroke="#1483C2" strokeWidth={1.5} />
+      <g fill="#fff" transform="scale(0.85)"><path d={FAN} /><path d={FAN} transform="rotate(120)" /><path d={FAN} transform="rotate(240)" /><circle r={1.5} /></g></svg>
+  );
+  if (kind === 'dehumidifier') return (
+    <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#11B5C6" stroke="#0B7C88" strokeWidth={1.5} />
+      <rect x={-5} y={-5} width={10} height={10} rx={2} fill="#fff" />
+      <path d="M0 -2.6 C1.8 -0.3 2.4 0.7 2.4 1.7 A2.4 2.4 0 1 1 -2.4 1.7 C-2.4 0.7 -1.8 -0.3 0 -2.6 Z" fill="#11B5C6" /></svg>
+  );
+  if (kind === 'air_scrubber') return (
+    <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#64748B" stroke="#475569" strokeWidth={1.5} />
+      <rect x={-5} y={-5} width={10} height={10} rx={2} fill="#fff" />
+      <g stroke="#64748B" strokeWidth={1.3} strokeLinecap="round"><line x1={-3} y1={-2.2} x2={3} y2={-2.2} /><line x1={-3} y1={0} x2={3} y2={0} /><line x1={-3} y1={2.2} x2={3} y2={2.2} /></g></svg>
+  );
+  if (kind === 'reading') return (
+    <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#F26B3A" stroke="#d94f1e" strokeWidth={1.5} />
+      <path d="M0 -6 C4 -0.8 5.4 1.2 5.4 3.6 A5.4 5.4 0 1 1 -5.4 3.6 C-5.4 1.2 -4 -0.8 0 -6 Z" fill="#fff" /></svg>
+  );
+  if (kind === 'arrow') return (
+    <svg width={26} height={26} viewBox="-13 -13 26 26"><circle r={12} fill="#4F46E5" stroke="#3730a3" strokeWidth={1.5} />
+      <g stroke="#fff" strokeWidth={2.2} fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1={-4.5} y1={4.5} x2={4.5} y2={-4.5} /><polyline points="0,-4.5 4.5,-4.5 4.5,0" /></g></svg>
+  );
+  const tile = (inner: any) => (
+    <svg width={26} height={26} viewBox="-13 -13 26 26"><rect x={-12} y={-12} width={24} height={24} rx={7} fill="#EEF2F7" stroke="#cbd5e1" strokeWidth={1.2} />{inner}</svg>
+  );
+  if (kind === 'door') return tile(<g stroke="#0E2A4D" strokeWidth={1.8} fill="none" strokeLinecap="round"><line x1={-5} y1={6} x2={-5} y2={-6} /><path d="M-5 -6 A11 11 0 0 1 6 5" strokeDasharray="2.2 2.2" /></g>);
+  if (kind === 'window') return tile(<g stroke="#0E2A4D" strokeWidth={1.8} strokeLinecap="round"><line x1={-6} y1={0} x2={6} y2={0} /><line x1={-6} y1={-3} x2={-6} y2={3} /><line x1={6} y1={-3} x2={6} y2={3} /></g>);
+  return tile(<g stroke="#0E2A4D" strokeWidth={2.6} strokeLinecap="round"><line x1={-7} y1={0} x2={-2.5} y2={0} /><line x1={2.5} y1={0} x2={7} y2={0} /></g>);
+}
 
 // Moisture-map editor. Accurate pointer mapping (getScreenCTM), a single camera
 // transform, tldraw-style snapping (grid + corners + axis guides at 8px/zoom),
@@ -316,6 +350,18 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
     setSelectedId(null); setDraft(null); setActive(null); setGuide(null);
   };
 
+  const activeKey = tool === 'equip' ? equipType : tool === 'door' ? doorKind : tool;
+  const PLACE_ITEMS: { key: string; label: string; onSelect: () => void }[] = [
+    { key: 'air_mover', label: 'Air Mover', onSelect: () => { setEquipType('air_mover'); selectTool('equip'); } },
+    { key: 'dehumidifier', label: 'Dehumidifier', onSelect: () => { setEquipType('dehumidifier'); selectTool('equip'); } },
+    { key: 'air_scrubber', label: 'Air Scrubber', onSelect: () => { setEquipType('air_scrubber'); selectTool('equip'); } },
+    { key: 'reading', label: 'Moisture Reading', onSelect: () => selectTool('reading') },
+    { key: 'arrow', label: 'Water Path', onSelect: () => selectTool('arrow') },
+    { key: 'door', label: 'Door', onSelect: () => { setDoorKind('door'); selectTool('door'); } },
+    { key: 'window', label: 'Window', onSelect: () => { setDoorKind('window'); selectTool('door'); } },
+    { key: 'opening', label: 'Opening', onSelect: () => { setDoorKind('opening'); selectTool('door'); } }
+  ];
+
   // reusable canvas content (drawn in the main view and inside the loupe)
   const content = (
     <>
@@ -336,10 +382,10 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
           <circle cx={rectDraft.a[0]} cy={rectDraft.a[1]} r={9 / k} fill="#1483C2" stroke="#fff" strokeWidth={2.5 / k} />
           {/* dimensions OUTSIDE the shape so a finger never covers them */}
           {rw > 0 && (
-            <text x={rx + rw / 2} y={ry - 12 / k} textAnchor="middle" fontSize={13 / k} fontWeight={800} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke">{ftLabel(rw)}</text>
+            <text x={rx + rw / 2} y={ry - 26 / k} textAnchor="middle" fontSize={13 / k} fontWeight={800} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke">{ftLabel(rw)}</text>
           )}
           {rh > 0 && (
-            <text x={rx - 12 / k} y={ry + rh / 2} textAnchor="middle" fontSize={13 / k} fontWeight={800} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke" transform={`rotate(-90 ${rx - 12 / k} ${ry + rh / 2})`}>{ftLabel(rh)}</text>
+            <text x={rx - 26 / k} y={ry + rh / 2} textAnchor="middle" fontSize={13 / k} fontWeight={800} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke" transform={`rotate(-90 ${rx - 26 / k} ${ry + rh / 2})`}>{ftLabel(rh)}</text>
           )}
         </>
       )}
@@ -396,9 +442,9 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
       </div>
 
       <div className="flex gap-2 px-3 py-2 bg-white/70 text-[11px] font-semibold overflow-x-auto">
-        <span className="chip bg-sky-soft text-sky-deep">AM {counts.am}</span>
-        <span className="chip bg-aqua-soft text-aqua-deep">DH {counts.dh}</span>
-        <span className="chip bg-slate-100 text-slate-600">AS {counts.as}</span>
+        <span className="chip bg-sky-soft text-sky-deep">Air Movers {counts.am}</span>
+        <span className="chip bg-aqua-soft text-aqua-deep">Dehumidifiers {counts.dh}</span>
+        <span className="chip bg-slate-100 text-slate-600">Air Scrubbers {counts.as}</span>
         <span className="chip bg-coral-soft text-coral-deep">Readings {counts.mp}</span>
       </div>
 
@@ -429,10 +475,10 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
         ))}
         {floorSqFt > 0 && <span className="shrink-0 text-gray-400 font-semibold ml-1">{floorSqFt} sq ft</span>}
         {floorSqFt > 0 && (
-          <span className={`shrink-0 chip ${counts.am < sug.airMovers ? 'bg-amber-100 text-amber-700' : 'bg-green-50 text-green-700'}`}>AM {counts.am}/{sug.airMovers}</span>
+          <span className={`shrink-0 chip ${counts.am < sug.airMovers ? 'bg-amber-100 text-amber-700' : 'bg-green-50 text-green-700'}`}>Air Movers {counts.am}/{sug.airMovers}</span>
         )}
         {floorSqFt > 0 && (
-          <span className={`shrink-0 chip ${counts.dh < sug.dehus ? 'bg-amber-100 text-amber-700' : 'bg-green-50 text-green-700'}`}>DH {counts.dh}/{sug.dehus}</span>
+          <span className={`shrink-0 chip ${counts.dh < sug.dehus ? 'bg-amber-100 text-amber-700' : 'bg-green-50 text-green-700'}`}>Dehumidifiers {counts.dh}/{sug.dehus}</span>
         )}
       </div>
 
@@ -490,36 +536,24 @@ export function MoistureMapEditor({ sketch, roomId, claimId, orgId, onClose }:
           <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Shape</span>
           <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
             {(['rect', 'poly'] as RoomMode[]).map(m => (
-              <button key={m} onClick={() => setRoomMode(m)} className={`px-3.5 py-1 rounded-full text-xs font-bold ${roomMode === m ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{m === 'rect' ? 'Rectangle' : 'Polygon'}</button>
+              <button key={m} onClick={() => setRoomMode(m)} className={`px-3.5 py-1 rounded-full text-xs font-bold ${roomMode === m ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{m === 'rect' ? 'Rectangle' : 'Custom'}</button>
             ))}
           </div>
         </div>
       )}
 
       {isPlace && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-white border-t border-gray-100 overflow-x-auto">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Place</span>
-          <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-            {([['equip', Wind], ['reading', Gauge], ['arrow', ArrowUpRight], ['door', DoorOpen]] as [Tool, any][]).map(([t, Icon]) => (
-              <button key={t} onClick={() => selectTool(t)} className={`w-9 h-7 rounded-full flex items-center justify-center ${tool === t ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>
-                <Icon size={16} />
+        <div className="flex gap-2 px-3 py-2 bg-white border-t border-gray-100 overflow-x-auto">
+          {PLACE_ITEMS.map(it => {
+            const on = activeKey === it.key;
+            return (
+              <button key={it.key} onClick={it.onSelect}
+                className={`shrink-0 w-[74px] flex flex-col items-center gap-1 py-1.5 rounded-2xl ${on ? 'bg-sky-soft ring-1 ring-sky/40' : 'active:bg-gray-50'}`}>
+                <PlaceGlyph kind={it.key} />
+                <span className={`text-[10.5px] font-semibold leading-tight text-center ${on ? 'text-sky-deep' : 'text-gray-500'}`}>{it.label}</span>
               </button>
-            ))}
-          </div>
-          {tool === 'equip' && (
-            <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-              {(Object.keys(EQUIP_META) as EquipType[]).map(t => (
-                <button key={t} onClick={() => setEquipType(t)} className={`px-3 py-1 rounded-full text-xs font-bold ${equipType === t ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{EQUIP_META[t].label}</button>
-              ))}
-            </div>
-          )}
-          {tool === 'door' && (
-            <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-              {(['door', 'opening', 'window'] as OpeningKind[]).map(t => (
-                <button key={t} onClick={() => setDoorKind(t)} className={`px-3 py-1 rounded-full text-xs font-bold capitalize ${doorKind === t ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{t}</button>
-              ))}
-            </div>
-          )}
+            );
+          })}
         </div>
       )}
 
