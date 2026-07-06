@@ -176,7 +176,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       if (roomMode === 'poly') { g.current.kind = 'pan'; }   // Custom = crosshair method: single finger pans, Add-corner button drops vertices
       else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
     } else if (tool === 'wet') {
-      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] }); showActive(sO, pxO);
+      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] }); setActive({ scene: s, px }); setGuide(null);
     } else if (tool === 'arrow') {
       const { p } = snapPoint(sO); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(sO, pxO);
     } else if (tool === 'floodcut') {
@@ -226,12 +226,13 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(q => q.id === id ? { ...q, x: p[0], y: p[1] } : q) }));
     } else if (g.current.kind === 'place') { showActive(sO, pxO); }
     else if (g.current.kind === 'wet') {
-      showActive(sO, pxO);
+      const fp = pxToScene(px);
+      setActive({ scene: fp, px });
       setDraft(d => {
         if (!d || d.kind !== 'wet') return d;
         const last = d.pts[d.pts.length - 1];
-        if (last && Math.hypot(sO[0] - last[0], sO[1] - last[1]) < 6) return d;
-        return { ...d, pts: [...d.pts, sO] };
+        if (last && Math.hypot(fp[0] - last[0], fp[1] - last[1]) < 6) return d;
+        return { ...d, pts: [...d.pts, fp] };
       });
     }
     else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
@@ -456,7 +457,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const drawReadout = rectDraft
     ? `${ftLabel(rw)} \u00d7 ${ftLabel(rh)} \u00b7 ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
     : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 aim at the first corner to close' : ''}` : null;
-  const fingerScene = active && tool !== 'room' ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
+  const fingerScene = active && tool !== 'room' && tool !== 'wet' ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
     am: scene.equipment.filter(e => e.type === 'air_mover').length,
     dh: scene.equipment.filter(e => e.type === 'dehumidifier').length,
@@ -512,7 +513,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       {guide?.x != null && <line x1={guide.x} y1={vMinY} x2={guide.x} y2={vMaxY} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
       {guide?.y != null && <line x1={vMinX} y1={guide.y} x2={vMaxX} y2={guide.y} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
       {draft?.kind === 'wet' && draft.pts.length > 0 && (
-        <polyline points={ptsStr(draft.pts)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={WET_BRUSH} strokeLinecap="round" strokeLinejoin="round" />
+        draft.pts.length === 1
+          ? <circle cx={draft.pts[0][0]} cy={draft.pts[0][1]} r={WET_BRUSH / 2} fill="#7DD3FC" fillOpacity={0.55} />
+          : <polyline points={ptsStr(draft.pts)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={WET_BRUSH} strokeLinecap="round" strokeLinejoin="round" />
       )}
       {rectDraft && (
         <>
@@ -643,12 +646,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       })()}
 
       <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border-b border-gray-100 overflow-x-auto text-[11px]">
-        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Class</span>
-        {[1, 2, 3, 4].map(c => (
-          <button key={c} onClick={() => setScene(sc => ({ ...sc, classOfLoss: c }))}
-            className={`shrink-0 w-6 h-6 rounded-full text-[11px] font-bold ${c === cls ? 'bg-gradient-to-br from-sky to-sky-deep text-white' : 'bg-gray-100 text-gray-500'}`}>{c}</button>
-        ))}
-        {floorSqFt > 0 && <span className="shrink-0 text-gray-400 font-semibold ml-1">{floorSqFt} sq ft</span>}
+        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">S500</span>
+        {floorSqFt > 0 && <span className="shrink-0 text-gray-400 font-semibold">{floorSqFt} sq ft</span>}
         {floorSqFt > 0 && (
           <span className={`shrink-0 chip ${counts.am < sug.airMovers ? 'bg-amber-100 text-amber-700' : 'bg-green-50 text-green-700'}`}>Air Movers {counts.am}/{sug.airMovers}</span>
         )}
@@ -844,6 +843,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
                   <button key={m} onClick={() => setWet({ material: m })} className={`px-3 py-1.5 rounded-full text-[13px] font-semibold ${wa.material === m ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{m}</button>
                 ))}
               </div>
+              <input value={wa.material ?? ''} onChange={e => setWet({ material: e.target.value })}
+                placeholder="Or type a material name" className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] focus:outline-none focus:border-sky" />
               <button onClick={() => setPendingWetId(null)} className="btn-primary w-full py-3 justify-center mt-4">Done</button>
             </div>
           </div>
