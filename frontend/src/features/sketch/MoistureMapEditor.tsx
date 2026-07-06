@@ -171,7 +171,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       else { const opn = hitOpening(scene, s[0], s[1]); const ar = opn ? null : hitArrow(scene, s[0], s[1]); if (opn) { setSelectedId(opn.id); g.current.kind = 'pan'; } else if (ar) { setSelectedId(ar.id); g.current.kind = 'pan'; } else { const w = hitWall(scene, s[0], s[1]); g.current.wallTap = w?.id; setSelectedId(w?.id ?? null); g.current.kind = 'pan'; } }
     } else if (tool === 'room') {
       if (roomMode === 'poly') { g.current.kind = 'pan'; }   // Custom = crosshair method: single finger pans, Add-corner button drops vertices
-      else { const { p } = snapPoint(sO); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(sO, pxO); }
+      else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
     } else if (tool === 'wet') {
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] });
     } else if (tool === 'arrow') {
@@ -207,7 +207,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     const gb = g.current.grab;
 
     if (g.current.kind === 'pan') { setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); }
-    else if (g.current.kind === 'rect') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d)); }
+    else if (g.current.kind === 'rect') { const p = showActive(pxToScene(px), px); setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d)); }
     else if (g.current.kind === 'arrow') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'arrow' ? { ...d, to: p } : d)); }
     else if (g.current.kind === 'handle' && g.current.id != null) {
       const t: Pt = gb ? [sO[0] + gb[0], sO[1] + gb[1]] : sO;
@@ -422,7 +422,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const drawReadout = rectDraft
     ? `${ftLabel(rw)} \u00d7 ${ftLabel(rh)} \u00b7 ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
     : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 aim at the first corner to close' : ''}` : null;
-  const fingerScene = active ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
+  const fingerScene = active && tool !== 'room' ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
     am: scene.equipment.filter(e => e.type === 'air_mover').length,
     dh: scene.equipment.filter(e => e.type === 'dehumidifier').length,
