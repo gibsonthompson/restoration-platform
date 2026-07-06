@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import {
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
-  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, WET_MATERIALS, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
+  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
@@ -174,7 +174,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       if (roomMode === 'poly') { g.current.kind = 'pan'; }   // Custom = crosshair method: single finger pans, Add-corner button drops vertices
       else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
     } else if (tool === 'wet') {
-      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] });
+      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] }); showActive(sO, pxO);
     } else if (tool === 'arrow') {
       const { p } = snapPoint(sO); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(sO, pxO);
     } else if (tool === 'floodcut') {
@@ -223,7 +223,15 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       const p = showActive(t, pxO); const id = g.current.id;
       setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(q => q.id === id ? { ...q, x: p[0], y: p[1] } : q) }));
     } else if (g.current.kind === 'place') { showActive(sO, pxO); }
-    else if (g.current.kind === 'wet') { setDraft(d => (d && d.kind === 'wet' ? { ...d, pts: [...d.pts, sO] } : d)); }
+    else if (g.current.kind === 'wet') {
+      showActive(sO, pxO);
+      setDraft(d => {
+        if (!d || d.kind !== 'wet') return d;
+        const last = d.pts[d.pts.length - 1];
+        if (last && Math.hypot(sO[0] - last[0], sO[1] - last[1]) < 6) return d;
+        return { ...d, pts: [...d.pts, sO] };
+      });
+    }
     else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
     else if (g.current.kind === 'containDraw') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'containment' ? { ...d, to: p } : d)); }
     else if (g.current.kind === 'floodTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } }
@@ -796,11 +804,11 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
               <p className="text-xs text-gray-400 mt-0.5">Tag this wet area for the drying log and estimate.</p>
               <div className="flex bg-gray-100 rounded-full p-0.5 mt-3">
                 {WET_SURFACES.map(sf => (
-                  <button key={sf} onClick={() => setWet({ surface: sf })} className={`flex-1 py-1.5 rounded-full text-xs font-bold capitalize ${(wa.surface ?? 'floor') === sf ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{sf}</button>
+                  <button key={sf} onClick={() => setWet({ surface: sf, material: MATERIALS_BY_SURFACE[sf].includes(wa.material ?? '') ? wa.material : undefined })} className={`flex-1 py-1.5 rounded-full text-xs font-bold capitalize ${(wa.surface ?? 'floor') === sf ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{sf}</button>
                 ))}
               </div>
               <div className="flex flex-wrap gap-2 mt-3">
-                {WET_MATERIALS.map(m => (
+                {MATERIALS_BY_SURFACE[wa.surface ?? 'floor'].map(m => (
                   <button key={m} onClick={() => setWet({ material: m })} className={`px-3 py-1.5 rounded-full text-[13px] font-semibold ${wa.material === m ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{m}</button>
                 ))}
               </div>

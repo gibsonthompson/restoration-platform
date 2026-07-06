@@ -132,6 +132,7 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
       {scene.walls.map(p => (
         <polygon key={'floor-' + p.id} points={ptsStr(p.points)} fill="#f4f7fb" />
       ))}
+      {scene.walls.map(p => <WallBand key={p.id} w={p} />)}
       {scene.wetAreas.map(p => {
         const c = polygonCentroid(p.points);
         const lbl = p.material ? (p.surface && p.surface !== 'floor' ? `${p.surface[0].toUpperCase()}${p.surface.slice(1)} \u00b7 ${p.material}` : p.material) : null;
@@ -156,7 +157,6 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
           <line x1={6} y1={-6} x2={-6} y2={6} stroke="#DC2626" strokeWidth={3.5} strokeLinecap="round" />
         </g>
       )}
-      {scene.walls.map(p => <WallBand key={p.id} w={p} />)}
       {(scene.openings ?? []).map(op => <OpeningGlyph key={op.id} scene={scene} op={op} selected={op.id === selectedId} />)}
       {(scene.floodCuts ?? []).map((fc, i) => <FloodCutBand key={'fc' + i} scene={scene} fc={fc} />)}
       {(scene.containments ?? []).map(c => <ContainmentBar key={c.id} c={c} selected={c.id === selectedId} />)}

@@ -257,4 +257,7 @@ export function containmentStats(scene: Scene): { sqft: number; count: number } 
 
 // S500 affected-material documentation for wet areas
 export const WET_SURFACES: ('floor' | 'wall' | 'ceiling')[] = ['floor', 'wall', 'ceiling'];
-export const WET_MATERIALS = ['Carpet', 'Carpet Pad', 'Hardwood', 'Laminate', 'Vinyl / LVP', 'Tile', 'Concrete', 'Drywall', 'Baseboard', 'Insulation', 'Subfloor', 'Trim'];
+export const FLOOR_MATERIALS = ['Carpet', 'Carpet Pad', 'Hardwood', 'Laminate', 'Vinyl / LVP', 'Tile', 'Concrete', 'Subfloor'];
+export const WALL_MATERIALS = ['Drywall', 'Plaster', 'Paneling', 'Baseboard', 'Trim', 'Insulation', 'Wallpaper'];
+export const CEILING_MATERIALS = ['Drywall', 'Plaster', 'Acoustic Tile', 'Insulation', 'Trim'];
+export const MATERIALS_BY_SURFACE: Record<'floor' | 'wall' | 'ceiling', string[]> = { floor: FLOOR_MATERIALS, wall: WALL_MATERIALS, ceiling: CEILING_MATERIALS };
