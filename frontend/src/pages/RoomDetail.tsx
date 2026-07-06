@@ -233,7 +233,7 @@ export default function RoomDetail() {
         )}
 
         {tab === 'sketches' && activeOrg && claimId && roomId && (
-          <SketchesTab roomId={roomId} claimId={claimId} orgId={activeOrg.id} />
+          <SketchesTab roomId={roomId} roomName={room?.name} claimId={claimId} orgId={activeOrg.id} />
         )}
       </div>
 

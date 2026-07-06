@@ -18,6 +18,7 @@ const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const OFF = 50; // offset-cursor: place target up-left of the finger so it's never under the thumb
 const WET_BRUSH = 48;   // wet paint brush width (scene units, ~1.2 ft)
+const READING_MATERIALS = ['Drywall', 'Wood / Framing', 'Subfloor', 'Concrete', 'Plaster', 'Carpet', 'Baseboard', 'Hardwood'];
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
@@ -70,6 +71,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const [lastScope, setLastScope] = useState<Tool>('floodcut');
   const [pendingWetId, setPendingWetId] = useState<string | null>(null);
   const [activeWetId, setActiveWetId] = useState<string | null>(null);
+  const [pendingReading, setPendingReading] = useState<{ id?: string; x: number; y: number } | null>(null);
+  const [rdgValue, setRdgValue] = useState('');
+  const [rdgMaterial, setRdgMaterial] = useState<string | undefined>(undefined);
+  const [rdgLabel, setRdgLabel] = useState('');
   const [lastPlace, setLastPlace] = useState<Tool>('equip');   // remembers the last Place sub-tool
   const [showGrid, setShowGrid] = useState(true);
   const [activeDate, setActiveDate] = useState<string>(todayISO());
@@ -330,6 +335,21 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     setDraft(null); setActive(null); setGuide(null);
   }
   function finishWet() { if (!activeWetId) return; setPendingWetId(activeWetId); setActiveWetId(null); }
+  function saveReading() {
+    if (!pendingReading) return;
+    const v = rdgValue.trim();
+    if (!v) { setPendingReading(null); return; }
+    snapshot();
+    const mat = rdgMaterial, lbl = rdgLabel.trim() || undefined;
+    if (pendingReading.id) {
+      const id = pendingReading.id;
+      setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(m => (m.id === id ? { ...upsertReading(m, activeDate, v), material: mat, label: lbl } : m)) }));
+    } else {
+      const { x, y } = pendingReading;
+      setScene(sc => ({ ...sc, moisturePoints: [...(sc.moisturePoints ?? []), { id: uid(), x, y, readings: [{ date: activeDate, value: v }], material: mat, label: lbl }] }));
+    }
+    setPendingReading(null);
+  }
   function undoWetStroke() {
     if (!activeWetId) return;
     setScene(sc => {
@@ -376,12 +396,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       }
     } else if (tool === 'reading') {
       const cur = editId ? (scene.moisturePoints ?? []).find(m => m.id === editId) : null;
-      const value = prompt(`Reading for ${fmtDate(activeDate)} (e.g. 18%, WET, 45)`, cur ? pointDisplay(cur, activeDate) : '');
-      if (value != null && value.trim() !== '') {
-        snapshot(); const v = value.trim();
-        if (editId) setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(m => m.id === editId ? upsertReading(m, activeDate, v) : m) }));
-        else setScene(sc => ({ ...sc, moisturePoints: [...(sc.moisturePoints ?? []), { id: uid(), x: p[0], y: p[1], readings: [{ date: activeDate, value: v }] }] }));
-      }
+      setRdgValue(cur ? pointDisplay(cur, activeDate) : '');
+      setRdgMaterial(cur?.material);
+      setRdgLabel(cur?.label ?? '');
+      setPendingReading(editId ? { id: editId, x: p[0], y: p[1] } : { x: p[0], y: p[1] });
     }
   }
 
@@ -512,11 +530,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       </g>
       {guide?.x != null && <line x1={guide.x} y1={vMinY} x2={guide.x} y2={vMaxY} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
       {guide?.y != null && <line x1={vMinX} y1={guide.y} x2={vMaxX} y2={guide.y} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
-      {draft?.kind === 'wet' && draft.pts.length > 0 && (
-        draft.pts.length === 1
-          ? <circle cx={draft.pts[0][0]} cy={draft.pts[0][1]} r={WET_BRUSH / 2} fill="#7DD3FC" fillOpacity={0.55} />
-          : <polyline points={ptsStr(draft.pts)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={WET_BRUSH} strokeLinecap="round" strokeLinejoin="round" />
-      )}
       {rectDraft && (
         <>
           <rect x={rx} y={ry} width={rw} height={rh} fill="#0E2A4D" fillOpacity={0.05} stroke="#1483C2" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeDasharray="6 4" />
@@ -556,6 +569,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         );
       })()}
       <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} />
+      {draft?.kind === 'wet' && draft.pts.length > 0 && (
+        draft.pts.length === 1
+          ? <circle cx={draft.pts[0][0]} cy={draft.pts[0][1]} r={WET_BRUSH / 2} fill="#7DD3FC" fillOpacity={0.55} />
+          : <polyline points={ptsStr(draft.pts)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={WET_BRUSH} strokeLinecap="round" strokeLinejoin="round" />
+      )}
+
 
       {draft?.kind === 'containment' && (
         <line x1={draft.from[0]} y1={draft.from[1]} x2={draft.to[0]} y2={draft.to[1]} stroke="#8B5CF6" strokeWidth={9} strokeLinecap="round" strokeDasharray="3 8" opacity={0.7} />
@@ -822,6 +841,32 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           <MapPin size={20} strokeWidth={isPlace ? 2.6 : 2} /> Place
         </button>
       </nav>
+
+      {pendingReading && (
+        <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 7vh)' }}>
+          <div className="absolute inset-0 bg-navy/30" onClick={() => setPendingReading(null)} />
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+            <div className="font-display font-bold text-lg text-navy">Moisture reading</div>
+            <p className="text-xs text-gray-400 mt-0.5">{fmtDate(activeDate)}</p>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Reading</label>
+            <input value={rdgValue} onChange={e => setRdgValue(e.target.value)} placeholder="e.g. 18%, 45, WET" inputMode="text"
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-3 mt-1 text-[18px] font-bold focus:outline-none focus:border-sky" />
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Material read</label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {READING_MATERIALS.map(m => (
+                <button key={m} onClick={() => setRdgMaterial(rdgMaterial === m ? undefined : m)} className={`px-3 py-1.5 rounded-full text-[13px] font-semibold ${rdgMaterial === m ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{m}</button>
+              ))}
+            </div>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Location (optional)</label>
+            <input value={rdgLabel} onChange={e => setRdgLabel(e.target.value)} placeholder="e.g. N wall, 2 ft up"
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-1 text-[16px] focus:outline-none focus:border-sky" />
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setPendingReading(null)} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+              <button onClick={saveReading} disabled={!rdgValue.trim()} className="btn-primary flex-1 py-3 justify-center disabled:opacity-40">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingWetId && (() => {
         const wa = scene.wetAreas.find(w => w.id === pendingWetId);
