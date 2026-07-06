@@ -4,12 +4,12 @@ import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import {
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
-  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
+  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, edgeLenFt, FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
 type RoomMode = 'rect' | 'poly';
-type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap';
+type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap';
 interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
 
@@ -72,6 +72,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const [pendingWetId, setPendingWetId] = useState<string | null>(null);
   const [activeWetId, setActiveWetId] = useState<string | null>(null);
   const [pendingReading, setPendingReading] = useState<{ id?: string; x: number; y: number } | null>(null);
+  const [pendingFlood, setPendingFlood] = useState<{ wallId: string; edge: number } | null>(null);
+  const [pendingContain, setPendingContain] = useState<{ id: string; isNew: boolean } | null>(null);
   const [rdgValue, setRdgValue] = useState('');
   const [rdgMaterial, setRdgMaterial] = useState<string | undefined>(undefined);
   const [rdgLabel, setRdgLabel] = useState('');
@@ -189,7 +191,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       const near = nearestWallEdge(scene, s[0], s[1]);
       g.current.floodEdge = near && near.dist < 45 ? { wallId: near.wallId, edge: near.edge } : undefined;
     } else if (tool === 'containment') {
-      const { p } = snapPoint(sO); g.current.kind = 'containDraw'; setDraft({ kind: 'containment', from: p, to: p }); showActive(sO, pxO);
+      g.current.kind = 'containTap'; g.current.downScene = s;
     } else {
       g.current.kind = 'place';
       g.current.editId = tool === 'reading' ? hitPoint(scene, sO[0], sO[1])?.id : undefined;
@@ -241,8 +243,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       });
     }
     else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
-    else if (g.current.kind === 'containDraw') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'containment' ? { ...d, to: p } : d)); }
-    else if (g.current.kind === 'floodTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } }
+    else if (g.current.kind === 'floodTap' || g.current.kind === 'containTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } }
     g.current.lastPx = px;
   }
 
@@ -279,18 +280,15 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       const { from, to } = draft;
       if (Math.hypot(to[0] - from[0], to[1] - from[1]) >= GRID) { snapshot(); setScene(sc => ({ ...sc, arrows: [...(sc.arrows ?? []), { id: uid(), from, to }] })); }
       setDraft(null);
-    } else if (g.current.kind === 'containDraw' && draft?.kind === 'containment') {
-      const { from, to } = draft;
-      if (Math.hypot(to[0] - from[0], to[1] - from[1]) >= GRID) { snapshot(); setScene(sc => ({ ...sc, containments: [...(sc.containments ?? []), { id: uid(), from, to, heightFt: containHeight }] })); }
-      setDraft(null);
     } else if (g.current.kind === 'floodTap' && !g.current.moved && g.current.floodEdge) {
-      const fe = g.current.floodEdge; snapshot();
-      setScene(sc => {
-        const exists = (sc.floodCuts ?? []).some(f => f.wallId === fe.wallId && f.edge === fe.edge);
-        return { ...sc, floodCuts: exists
-          ? (sc.floodCuts ?? []).filter(f => !(f.wallId === fe.wallId && f.edge === fe.edge))
-          : [...(sc.floodCuts ?? []), { wallId: fe.wallId, edge: fe.edge, heightFt: floodHeight }] };
-      });
+      const fe = g.current.floodEdge;
+      const exists = (scene.floodCuts ?? []).some(f => f.wallId === fe.wallId && f.edge === fe.edge);
+      if (!exists) { snapshot(); setScene(sc => ({ ...sc, floodCuts: [...(sc.floodCuts ?? []), { wallId: fe.wallId, edge: fe.edge, heightFt: 2 }] })); }
+      setPendingFlood({ wallId: fe.wallId, edge: fe.edge });
+    } else if (g.current.kind === 'containTap' && !g.current.moved && g.current.downScene) {
+      const pt = g.current.downScene, id = uid();
+      snapshot(); setScene(sc => ({ ...sc, containments: [...(sc.containments ?? []), { id, x: pt[0], y: pt[1], widthFt: 3, heightFt: 8 }] }));
+      setPendingContain({ id, isNew: true });
     } else if (g.current.kind === 'polyTap' && !g.current.moved) {
       const { p } = snapPoint(g.current.downScene!);
       const d = draft;
@@ -576,9 +574,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       )}
 
 
-      {draft?.kind === 'containment' && (
-        <line x1={draft.from[0]} y1={draft.from[1]} x2={draft.to[0]} y2={draft.to[1]} stroke="#8B5CF6" strokeWidth={9} strokeLinecap="round" strokeDasharray="3 8" opacity={0.7} />
-      )}
       {tool === 'wet' && active && (
         <circle cx={active.scene[0]} cy={active.scene[1]} r={WET_BRUSH / 2} fill="#7DD3FC" fillOpacity={0.25} stroke="#0284c7" strokeWidth={2} vectorEffect="non-scaling-stroke" />
       )}
@@ -745,24 +740,11 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
               ))}
             </div>
           </div>
-          {tool === 'floodcut' && (
-            <div className="flex items-center gap-1.5 px-3 pb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Height</span>
-              {[2, 4].map(h => (
-                <button key={h} onClick={() => setFloodHeight(h)} className={`px-2.5 py-1 rounded-full text-xs font-bold ${floodHeight === h ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>{h} ft</button>
-              ))}
-              <button onClick={() => { const v = prompt('Cut height in feet', String(floodHeight)); const n = v ? parseFloat(v) : NaN; if (n > 0) setFloodHeight(n); }} className={`px-2.5 py-1 rounded-full text-xs font-bold ${floodHeight !== 2 && floodHeight !== 4 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>Custom</button>
-              <span className="ml-auto text-[12px] font-extrabold text-amber-700 whitespace-nowrap">{fcStats.lf.toFixed(0)} LF \u00b7 {fcStats.sqft.toFixed(0)} sq ft</span>
-            </div>
-          )}
-          {tool === 'containment' && (
-            <div className="flex items-center gap-1.5 px-3 pb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Height</span>
-              <button onClick={() => setContainHeight(8)} className={`px-2.5 py-1 rounded-full text-xs font-bold ${containHeight === 8 ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>8 ft</button>
-              <button onClick={() => { const v = prompt('Barrier height in feet', String(containHeight)); const n = v ? parseFloat(v) : NaN; if (n > 0) setContainHeight(n); }} className={`px-2.5 py-1 rounded-full text-xs font-bold ${containHeight !== 8 ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>Custom</button>
-              <span className="ml-auto text-[12px] font-extrabold text-violet-700 whitespace-nowrap">{cStats.count} barrier{cStats.count === 1 ? '' : 's'} \u00b7 {cStats.sqft.toFixed(0)} sq ft</span>
-            </div>
-          )}
+          <div className="flex items-center px-3 pb-2">
+            {tool === 'floodcut'
+              ? <span className="text-[12px] font-extrabold text-amber-700">{fcStats.lf.toFixed(0)} LF \u00b7 {fcStats.sqft.toFixed(0)} sq ft removed</span>
+              : <span className="text-[12px] font-extrabold text-violet-700">{cStats.count} barrier{cStats.count === 1 ? '' : 's'} \u00b7 {cStats.sqft.toFixed(0)} sq ft</span>}
+          </div>
         </div>
       )}
 
@@ -820,8 +802,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
         {tool === 'arrow' && 'Drag from the water source toward where it traveled.'}
         {tool === 'door' && `Drag along a wall to position the ${doorKind}. The highlight shows where it attaches.`}
-        {tool === 'floodcut' && 'Tap the walls that were flood-cut. Tap again to remove one.'}
-        {tool === 'containment' && 'Drag a poly barrier across a doorway or opening.'}
+        {tool === 'floodcut' && 'Tap a wall that was cut, then set the height and length.'}
+        {tool === 'containment' && 'Tap where the barrier goes, then enter its size.'}
         {tool === 'origin' && 'Drop the X on the source of the loss.'}
       </div>
 
@@ -841,6 +823,80 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           <MapPin size={20} strokeWidth={isPlace ? 2.6 : 2} /> Place
         </button>
       </nav>
+
+      {pendingFlood && (() => {
+        const fc = (scene.floodCuts ?? []).find(f => f.wallId === pendingFlood.wallId && f.edge === pendingFlood.edge);
+        if (!fc) return null;
+        const full = edgeLenFt(scene, fc.wallId, fc.edge);
+        const len = fc.lengthFt != null ? Math.min(fc.lengthFt, full) : full;
+        const setFc = (patch: Partial<typeof fc>) => setScene(sc => ({ ...sc, floodCuts: (sc.floodCuts ?? []).map(f => (f.wallId === fc.wallId && f.edge === fc.edge ? { ...f, ...patch } : f)) }));
+        const remove = () => { setScene(sc => ({ ...sc, floodCuts: (sc.floodCuts ?? []).filter(f => !(f.wallId === fc.wallId && f.edge === fc.edge)) })); setPendingFlood(null); };
+        return (
+          <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 7vh)' }}>
+            <div className="absolute inset-0 bg-navy/30" onClick={() => setPendingFlood(null)} />
+            <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+              <div className="font-display font-bold text-lg text-navy">Flood cut</div>
+              <p className="text-xs text-gray-400 mt-0.5">Wall is {full.toFixed(1)} ft \u00b7 {(len * fc.heightFt).toFixed(0)} sq ft removed (DRYW)</p>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Cut height</label>
+              <div className="flex gap-2 mt-1">
+                {FLOOD_HEIGHTS.map(h => (
+                  <button key={h.label} onClick={() => setFc({ heightFt: h.ft })} className={`px-4 py-1.5 rounded-full text-sm font-bold ${Math.abs(fc.heightFt - h.ft) < 0.01 ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-700'}`}>{h.label}</button>
+                ))}
+                <input value={String(fc.heightFt)} onChange={e => { const n = parseFloat(e.target.value); if (n > 0) setFc({ heightFt: n }); }} inputMode="decimal"
+                  className="w-16 border border-gray-200 rounded-xl px-2 py-1.5 text-sm font-bold text-center focus:outline-none focus:border-sky" />
+                <span className="self-center text-xs text-gray-400">ft</span>
+              </div>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Cut length (LF)</label>
+              <div className="flex gap-2 mt-1 items-center">
+                <input value={len.toFixed(1)} onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setFc({ lengthFt: Math.max(0, Math.min(n, full)) }); }} inputMode="decimal"
+                  className="flex-1 border border-gray-200 rounded-xl px-3.5 py-2.5 text-[16px] font-bold focus:outline-none focus:border-sky" />
+                <span className="text-xs text-gray-400">ft</span>
+                <button onClick={() => setFc({ lengthFt: undefined })} className="px-3 py-2 rounded-xl text-xs font-bold bg-gray-100 text-gray-600">Full wall</button>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button onClick={remove} className="flex-1 border border-red-200 rounded-xl py-3 font-semibold text-red-600 active:bg-red-50">Remove</button>
+                <button onClick={() => setPendingFlood(null)} className="btn-primary flex-1 py-3 justify-center">Done</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {pendingContain && (() => {
+        const c = (scene.containments ?? []).find(x => x.id === pendingContain.id);
+        if (!c) return null;
+        const setC = (patch: Partial<typeof c>) => setScene(sc => ({ ...sc, containments: (sc.containments ?? []).map(x => (x.id === c.id ? { ...x, ...patch } : x)) }));
+        const sqft = Math.round((c.widthFt ?? 0) * c.heightFt);
+        const cancel = () => { if (pendingContain.isNew) setScene(sc => ({ ...sc, containments: (sc.containments ?? []).filter(x => x.id !== c.id) })); setPendingContain(null); };
+        return (
+          <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 7vh)' }}>
+            <div className="absolute inset-0 bg-navy/30" onClick={cancel} />
+            <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+              <div className="font-display font-bold text-lg text-navy">Containment barrier</div>
+              <p className="text-xs text-gray-400 mt-0.5">Poly sheeting \u00b7 {sqft} sq ft (PLASTIC)</p>
+              <div className="flex gap-3 mt-3">
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Width (ft)</label>
+                  <input value={String(c.widthFt ?? '')} onChange={e => setC({ widthFt: parseFloat(e.target.value) || 0 })} inputMode="decimal"
+                    className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-1 text-[16px] font-bold focus:outline-none focus:border-sky" />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Height (ft)</label>
+                  <input value={String(c.heightFt ?? '')} onChange={e => setC({ heightFt: parseFloat(e.target.value) || 0 })} inputMode="decimal"
+                    className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-1 text-[16px] font-bold focus:outline-none focus:border-sky" />
+                </div>
+              </div>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Location (optional)</label>
+              <input value={c.label ?? ''} onChange={e => setC({ label: e.target.value || undefined })} placeholder="e.g. hallway doorway"
+                className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-1 text-[16px] focus:outline-none focus:border-sky" />
+              <div className="flex gap-2 mt-4">
+                <button onClick={cancel} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+                <button onClick={() => setPendingContain(null)} className="btn-primary flex-1 py-3 justify-center">Save</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {pendingReading && (
         <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 7vh)' }}>

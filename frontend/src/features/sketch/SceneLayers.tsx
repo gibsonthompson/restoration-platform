@@ -6,28 +6,50 @@ import { EQUIP_META, ptsStr, pointDisplay, smoothClosedPath, polygonCentroid, wa
 function FloodCutBand({ scene, fc }: { scene: Scene; fc: FloodCut }) {
   const ep = edgePoints(scene, fc.wallId, fc.edge); if (!ep) return null;
   const nrm = edgeInwardNormal(scene, fc.wallId, fc.edge);
+  const [a, b] = ep;
+  const dx = b[0] - a[0], dy = b[1] - a[1], full = Math.hypot(dx, dy) || 1;
+  const ux = dx / full, uy = dy / full;
+  const lenU = fc.lengthFt != null ? Math.min(fc.lengthFt * UNITS_PER_FT, full) : full;
   const off = 9;
-  const a: Pt = [ep[0][0] + nrm[0] * off, ep[0][1] + nrm[1] * off];
-  const b: Pt = [ep[1][0] + nrm[0] * off, ep[1][1] + nrm[1] * off];
-  const mid: Pt = [(a[0] + b[0]) / 2 + nrm[0] * 12, (a[1] + b[1]) / 2 + nrm[1] * 12];
+  const A: Pt = [a[0] + nrm[0] * off, a[1] + nrm[1] * off];
+  const B: Pt = [a[0] + ux * lenU + nrm[0] * off, a[1] + uy * lenU + nrm[1] * off];
+  const mid: Pt = [(A[0] + B[0]) / 2 + nrm[0] * 12, (A[1] + B[1]) / 2 + nrm[1] * 12];
+  const lf = Math.round(lenU / UNITS_PER_FT);
+  const ht = fc.heightFt < 1 ? '4\u2033' : `${fc.heightFt}\u2032`;
   return (
     <g>
-      <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#F59E0B" strokeWidth={7} strokeLinecap="round" strokeDasharray="2 7" opacity={0.95} />
-      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={13} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{fc.heightFt}\u2032 cut</text>
+      <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#F59E0B" strokeWidth={7} strokeLinecap="round" strokeDasharray="2 7" opacity={0.95} />
+      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} LF \u00b7 {ht} cut</text>
     </g>
   );
 }
-// Containment: a poly barrier line (width x height) with a sq-ft label.
+// Containment: a tap-placed poly barrier symbol (width x height) with a sq-ft label.
 function ContainmentBar({ c, selected }: { c: Containment; selected?: boolean }) {
-  const mid: Pt = [(c.from[0] + c.to[0]) / 2, (c.from[1] + c.to[1]) / 2];
-  const wft = Math.hypot(c.to[0] - c.from[0], c.to[1] - c.from[1]) / UNITS_PER_FT;
-  const sqft = Math.round(wft * c.heightFt);
-  return (
-    <g>
-      <line x1={c.from[0]} y1={c.from[1]} x2={c.to[0]} y2={c.to[1]} stroke={selected ? '#6D28D9' : '#8B5CF6'} strokeWidth={selected ? 11 : 9} strokeLinecap="round" strokeDasharray="3 8" />
-      <text x={mid[0]} y={mid[1] - 12} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft poly</text>
-    </g>
-  );
+  if (c.x != null && c.y != null) {
+    const sqft = Math.round((c.widthFt ?? 0) * c.heightFt);
+    const h = 18;
+    return (
+      <g>
+        <rect x={c.x - h} y={c.y - h} width={h * 2} height={h * 2} rx={4} fill="#8B5CF6" fillOpacity={0.16} stroke={selected ? '#6D28D9' : '#8B5CF6'} strokeWidth={2.5} strokeDasharray="4 3" />
+        <line x1={c.x - h} y1={c.y - h} x2={c.x + h} y2={c.y + h} stroke="#8B5CF6" strokeWidth={2} opacity={0.5} />
+        <line x1={c.x + h} y1={c.y - h} x2={c.x - h} y2={c.y + h} stroke="#8B5CF6" strokeWidth={2} opacity={0.5} />
+        <text x={c.x} y={c.y - h - 9} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft poly</text>
+        {c.label && <text x={c.x} y={c.y + h + 11} textAnchor="middle" dominantBaseline="central" fontSize={10} fontWeight={700} fill="#7C3AED" stroke="#fff" strokeWidth={3} paintOrder="stroke">{c.label}</text>}
+      </g>
+    );
+  }
+  if (c.from && c.to) {
+    const mid: Pt = [(c.from[0] + c.to[0]) / 2, (c.from[1] + c.to[1]) / 2];
+    const wft = Math.hypot(c.to[0] - c.from[0], c.to[1] - c.from[1]) / UNITS_PER_FT;
+    const sqft = Math.round(wft * c.heightFt);
+    return (
+      <g>
+        <line x1={c.from[0]} y1={c.from[1]} x2={c.to[0]} y2={c.to[1]} stroke={selected ? '#6D28D9' : '#8B5CF6'} strokeWidth={9} strokeLinecap="round" strokeDasharray="3 8" />
+        <text x={mid[0]} y={mid[1] - 12} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft poly</text>
+      </g>
+    );
+  }
+  return null;
 }
 
 export function EquipIcon({ type }: { type: EquipType }) {

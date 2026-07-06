@@ -7,8 +7,8 @@ export type Pt = [number, number];
 
 export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint
 // Xactimate-shaped demo/prep scope, measured from sketch geometry:
-export interface FloodCut { wallId: string; edge: number; heightFt: number; }         // DRYW flood-cut: LF x height
-export interface Containment { id: string; from: Pt; to: Pt; heightFt: number; }        // PLASTIC barrier: width x height
+export interface FloodCut { wallId: string; edge: number; heightFt: number; lengthFt?: number; }   // DRYW flood-cut: LF (lengthFt or full edge) at cut height
+export interface Containment { id: string; heightFt: number; x?: number; y?: number; widthFt?: number; label?: string; from?: Pt; to?: Pt; }   // PLASTIC barrier: width x height (tap-placed); from/to legacy
 export interface Equip { id: string; type: EquipType; x: number; y: number; }
 export interface Arrow { id: string; from: Pt; to: Pt; }   // water migration direction (S500)
 export type OpeningKind = 'door' | 'opening' | 'window';
@@ -240,22 +240,32 @@ export function edgeInwardNormal(scene: Scene, wallId: string, edge: number): Pt
 export function hasFloodCut(scene: Scene, wallId: string, edge: number): boolean {
   return (scene.floodCuts ?? []).some(f => f.wallId === wallId && f.edge === edge);
 }
+export function edgeLenFt(scene: Scene, wallId: string, edge: number): number {
+  const ep = edgePoints(scene, wallId, edge); if (!ep) return 0;
+  return Math.hypot(ep[1][0] - ep[0][0], ep[1][1] - ep[0][1]) / UNITS_PER_FT;
+}
 export function floodCutStats(scene: Scene): { lf: number; sqft: number } {
   let lf = 0, sqft = 0;
   for (const fc of scene.floodCuts ?? []) {
-    const ep = edgePoints(scene, fc.wallId, fc.edge); if (!ep) continue;
-    const len = Math.hypot(ep[1][0] - ep[0][0], ep[1][1] - ep[0][1]) / UNITS_PER_FT;
+    const full = edgeLenFt(scene, fc.wallId, fc.edge); if (!full) continue;
+    const len = fc.lengthFt != null ? Math.min(fc.lengthFt, full) : full;
     lf += len; sqft += len * fc.heightFt;
   }
   return { lf, sqft };
 }
+export function containmentSqFt(c: Containment): number {
+  if (c.widthFt != null) return c.widthFt * c.heightFt;
+  if (c.from && c.to) return (Math.hypot(c.to[0] - c.from[0], c.to[1] - c.from[1]) / UNITS_PER_FT) * c.heightFt;
+  return 0;
+}
 export function containmentStats(scene: Scene): { sqft: number; count: number } {
-  let sqft = 0; const list = scene.containments ?? [];
-  for (const c of list) sqft += (Math.hypot(c.to[0] - c.from[0], c.to[1] - c.from[1]) / UNITS_PER_FT) * c.heightFt;
+  const list = scene.containments ?? [];
+  let sqft = 0; for (const c of list) sqft += containmentSqFt(c);
   return { sqft, count: list.length };
 }
 
 // S500 affected-material documentation for wet areas
+export const FLOOD_HEIGHTS: { label: string; ft: number }[] = [{ label: '4"', ft: 1 / 3 }, { label: "2'", ft: 2 }, { label: "4'", ft: 4 }];
 export const WET_SURFACES: ('floor' | 'wall' | 'ceiling')[] = ['floor', 'wall', 'ceiling'];
 export const FLOOR_MATERIALS = ['Carpet', 'Carpet Pad', 'Hardwood', 'Laminate', 'Vinyl / LVP', 'Tile', 'Concrete', 'Subfloor'];
 export const WALL_MATERIALS = ['Drywall', 'Plaster', 'Paneling', 'Baseboard', 'Trim', 'Insulation', 'Wallpaper'];
