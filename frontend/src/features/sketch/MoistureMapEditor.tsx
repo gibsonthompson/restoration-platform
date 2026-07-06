@@ -17,6 +17,7 @@ const PLACE_SET: Tool[] = ['equip', 'reading', 'origin'];   // grouped under the
 const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const OFF = 50; // offset-cursor: place target up-left of the finger so it's never under the thumb
+const WET_BRUSH = 48;   // wet paint brush width (scene units, ~1.2 ft)
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
@@ -174,7 +175,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       if (roomMode === 'poly') { g.current.kind = 'pan'; }   // Custom = crosshair method: single finger pans, Add-corner button drops vertices
       else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
     } else if (tool === 'wet') {
-      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [sO] }); showActive(sO, pxO);
+      g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] });
     } else if (tool === 'arrow') {
       const { p } = snapPoint(sO); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(sO, pxO);
     } else if (tool === 'floodcut') {
@@ -224,12 +225,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       setScene(sc => ({ ...sc, moisturePoints: (sc.moisturePoints ?? []).map(q => q.id === id ? { ...q, x: p[0], y: p[1] } : q) }));
     } else if (g.current.kind === 'place') { showActive(sO, pxO); }
     else if (g.current.kind === 'wet') {
-      showActive(sO, pxO);
+      const fp = pxToScene(px);
       setDraft(d => {
         if (!d || d.kind !== 'wet') return d;
         const last = d.pts[d.pts.length - 1];
-        if (last && Math.hypot(sO[0] - last[0], sO[1] - last[1]) < 6) return d;
-        return { ...d, pts: [...d.pts, sO] };
+        if (last && Math.hypot(fp[0] - last[0], fp[1] - last[1]) < 6) return d;
+        return { ...d, pts: [...d.pts, fp] };
       });
     }
     else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
@@ -256,7 +257,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       }
       setDraft(null);
     } else if (g.current.kind === 'wet' && draft?.kind === 'wet') {
-      if (draft.pts.length > 2) { snapshot(); const pts = draft.pts; const id = uid(); setScene(sc => ({ ...sc, wetAreas: [...sc.wetAreas, { id, points: pts, surface: 'floor' as const }] })); setPendingWetId(id); }
+      if (g.current.moved && draft.pts.length >= 1) { snapshot(); const pts = draft.pts; const id = uid(); setScene(sc => ({ ...sc, wetAreas: [...sc.wetAreas, { id, points: pts, brush: WET_BRUSH, surface: 'floor' as const }] })); setPendingWetId(id); }
       setDraft(null);
     } else if (g.current.kind === 'arrow' && draft?.kind === 'arrow') {
       const { from, to } = draft;
@@ -488,8 +489,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       </g>
       {guide?.x != null && <line x1={guide.x} y1={vMinY} x2={guide.x} y2={vMaxY} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
       {guide?.y != null && <line x1={vMinX} y1={guide.y} x2={vMaxX} y2={guide.y} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
-      {draft?.kind === 'wet' && draft.pts.length > 1 && (
-        <path d={smoothClosedPath(draft.pts)} fill="#7DD3FC" fillOpacity={0.4} stroke="#0284c7" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+      {draft?.kind === 'wet' && draft.pts.length > 0 && (
+        <polyline points={ptsStr(draft.pts)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={WET_BRUSH} strokeLinecap="round" strokeLinejoin="round" />
       )}
       {rectDraft && (
         <>
@@ -765,7 +766,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
         {tool === 'move' && 'Drag a corner to reshape. Drag items to move. Tap a room to label its material.'}
         {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Drag to pan, pinch to zoom.' : 'Drag a box from the anchor corner. Snaps to grid and existing corners.')}
-        {tool === 'wet' && 'Drag to outline the wet area. Two fingers to pan and zoom.'}
+        {tool === 'wet' && 'Paint over the wet spots. Two fingers to pan and zoom.'}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
         {tool === 'arrow' && 'Drag from the water source toward where it traveled.'}

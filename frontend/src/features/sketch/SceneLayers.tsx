@@ -138,7 +138,9 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
         const lbl = p.material ? (p.surface && p.surface !== 'floor' ? `${p.surface[0].toUpperCase()}${p.surface.slice(1)} \u00b7 ${p.material}` : p.material) : null;
         return (
           <g key={p.id}>
-            <path d={smoothClosedPath(p.points)} fill="#7DD3FC" fillOpacity={0.5} stroke="#0284c7" strokeWidth={3} strokeLinejoin="round" />
+            {p.brush
+              ? <polyline points={ptsStr(p.points)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={p.brush} strokeLinecap="round" strokeLinejoin="round" />
+              : <path d={smoothClosedPath(p.points)} fill="#7DD3FC" fillOpacity={0.5} stroke="#0284c7" strokeWidth={3} strokeLinejoin="round" />}
             {lbl && <text x={c[0]} y={c[1]} textAnchor="middle" dominantBaseline="central" fontSize={13} fontWeight={700} fill="#075985" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lbl}</text>}
           </g>
         );
