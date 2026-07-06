@@ -5,7 +5,7 @@
 export type EquipType = 'air_mover' | 'dehumidifier' | 'air_scrubber';
 export type Pt = [number, number];
 
-export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; }   // affected surface + material (S500); brush = painted stroke width
+export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint
 // Xactimate-shaped demo/prep scope, measured from sketch geometry:
 export interface FloodCut { wallId: string; edge: number; heightFt: number; }         // DRYW flood-cut: LF x height
 export interface Containment { id: string; from: Pt; to: Pt; heightFt: number; }        // PLASTIC barrier: width x height
@@ -265,9 +265,14 @@ export const MATERIALS_BY_SURFACE: Record<'floor' | 'wall' | 'ceiling', string[]
 // Wet area square footage: painted brush stroke (length x width) or legacy filled polygon
 export function wetSqFt(w: Poly): number {
   if (w.brush) {
-    let len = 0;
-    for (let i = 1; i < w.points.length; i++) len += Math.hypot(w.points[i][0] - w.points[i - 1][0], w.points[i][1] - w.points[i - 1][1]);
-    return (len * w.brush + Math.PI * (w.brush / 2) ** 2) / (UNITS_PER_FT * UNITS_PER_FT);
+    const strokes = w.strokes ?? (w.points.length ? [w.points] : []);
+    let area = 0;
+    for (const st of strokes) {
+      let len = 0;
+      for (let i = 1; i < st.length; i++) len += Math.hypot(st[i][0] - st[i - 1][0], st[i][1] - st[i - 1][1]);
+      area += len * w.brush + Math.PI * (w.brush / 2) ** 2;
+    }
+    return area / (UNITS_PER_FT * UNITS_PER_FT);
   }
   return polygonArea(w.points) / (UNITS_PER_FT * UNITS_PER_FT);
 }
