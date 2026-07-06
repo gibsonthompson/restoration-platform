@@ -5,7 +5,7 @@
 export type EquipType = 'air_mover' | 'dehumidifier' | 'air_scrubber';
 export type Pt = [number, number];
 
-export interface Poly { id: string; points: Pt[]; material?: string; }   // material: affected surface (S500)
+export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; }   // affected surface + material (S500)
 // Xactimate-shaped demo/prep scope, measured from sketch geometry:
 export interface FloodCut { wallId: string; edge: number; heightFt: number; }         // DRYW flood-cut: LF x height
 export interface Containment { id: string; from: Pt; to: Pt; heightFt: number; }        // PLASTIC barrier: width x height
@@ -26,6 +26,7 @@ export interface Scene {
   classOfLoss?: number;      // IICRC S500 class 1-4 (drives equipment suggestion)
   floodCuts?: FloodCut[];
   containments?: Containment[];
+  originOfLoss?: Pt;   // S500: mark the source of loss with an X
 }
 
 export const SCENE_SIZE = 1000;
@@ -49,6 +50,7 @@ export const normalizeScene = (s: any): Scene => ({
   arrows: s?.arrows ?? [],
   floodCuts: s?.floodCuts ?? [],
   containments: s?.containments ?? [],
+  originOfLoss: s?.originOfLoss,
   openings: s?.openings ?? [],
   classOfLoss: s?.classOfLoss ?? undefined
 });
@@ -252,3 +254,7 @@ export function containmentStats(scene: Scene): { sqft: number; count: number } 
   for (const c of list) sqft += (Math.hypot(c.to[0] - c.from[0], c.to[1] - c.from[1]) / UNITS_PER_FT) * c.heightFt;
   return { sqft, count: list.length };
 }
+
+// S500 affected-material documentation for wet areas
+export const WET_SURFACES: ('floor' | 'wall' | 'ceiling')[] = ['floor', 'wall', 'ceiling'];
+export const WET_MATERIALS = ['Carpet', 'Carpet Pad', 'Hardwood', 'Laminate', 'Vinyl / LVP', 'Tile', 'Concrete', 'Drywall', 'Baseboard', 'Insulation', 'Subfloor', 'Trim'];

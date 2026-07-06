@@ -4,16 +4,16 @@ import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import {
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
-  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
+  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, WET_MATERIALS, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
-type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment';
+type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
 type RoomMode = 'rect' | 'poly';
 type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap';
 interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
 
-const PLACE_SET: Tool[] = ['equip', 'reading', 'arrow'];   // grouped under the Place tab
+const PLACE_SET: Tool[] = ['equip', 'reading', 'origin'];   // grouped under the Place tab
 const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const OFF = 50; // offset-cursor: place target up-left of the finger so it's never under the thumb
@@ -67,6 +67,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const [floodHeight, setFloodHeight] = useState(2);
   const [containHeight, setContainHeight] = useState(8);
   const [lastScope, setLastScope] = useState<Tool>('floodcut');
+  const [pendingWetId, setPendingWetId] = useState<string | null>(null);
   const [lastPlace, setLastPlace] = useState<Tool>('equip');   // remembers the last Place sub-tool
   const [showGrid, setShowGrid] = useState(true);
   const [activeDate, setActiveDate] = useState<string>(todayISO());
@@ -247,7 +248,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       }
       setDraft(null);
     } else if (g.current.kind === 'wet' && draft?.kind === 'wet') {
-      if (draft.pts.length > 2) { snapshot(); const pts = draft.pts; setScene(sc => ({ ...sc, wetAreas: [...sc.wetAreas, { id: uid(), points: pts }] })); }
+      if (draft.pts.length > 2) { snapshot(); const pts = draft.pts; const id = uid(); setScene(sc => ({ ...sc, wetAreas: [...sc.wetAreas, { id, points: pts, surface: 'floor' as const }] })); setPendingWetId(id); }
       setDraft(null);
     } else if (g.current.kind === 'arrow' && draft?.kind === 'arrow') {
       const { from, to } = draft;
@@ -327,7 +328,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   // Place the currently-armed item at a scene point (used by canvas taps AND
   // by drag-and-drop from the palette).
   function commitPlace(p: Pt, editId?: string) {
-    if (tool === 'equip') {
+    if (tool === 'origin') {
+      snapshot();
+      setScene(sc => ({ ...sc, originOfLoss: p }));
+    } else if (tool === 'equip') {
       snapshot();
       setScene(sc => ({ ...sc, equipment: [...sc.equipment, { id: uid(), type: equipType, x: p[0], y: p[1] }] }));
     } else if (tool === 'door') {
@@ -447,7 +451,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     { key: 'dehumidifier', label: 'Dehumidifier', droppable: true, onSelect: () => { setEquipType('dehumidifier'); selectTool('equip'); } },
     { key: 'air_scrubber', label: 'Air Scrubber', droppable: true, onSelect: () => { setEquipType('air_scrubber'); selectTool('equip'); } },
     { key: 'reading', label: 'Moisture Reading', droppable: true, onSelect: () => selectTool('reading') },
-    { key: 'arrow', label: 'Water Path', droppable: false, onSelect: () => selectTool('arrow') }
+    { key: 'origin', label: 'Origin (X)', droppable: true, onSelect: () => selectTool('origin') }
   ];
 
   // Room tab: rectangle/custom shapes + structural openings (doors/windows live on walls).
@@ -760,6 +764,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         {tool === 'door' && `Drag along a wall to position the ${doorKind}. The highlight shows where it attaches.`}
         {tool === 'floodcut' && 'Tap the walls that were flood-cut. Tap again to remove one.'}
         {tool === 'containment' && 'Drag a poly barrier across a doorway or opening.'}
+        {tool === 'origin' && 'Drop the X on the source of the loss.'}
       </div>
 
       <nav className="safe-bottom bg-white border-t border-gray-100 flex">
@@ -778,6 +783,32 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           <MapPin size={20} strokeWidth={isPlace ? 2.6 : 2} /> Place
         </button>
       </nav>
+
+      {pendingWetId && (() => {
+        const wa = scene.wetAreas.find(w => w.id === pendingWetId);
+        if (!wa) return null;
+        const setWet = (patch: Partial<typeof wa>) => setScene(sc => ({ ...sc, wetAreas: sc.wetAreas.map(w => (w.id === pendingWetId ? { ...w, ...patch } : w)) }));
+        return (
+          <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
+            <div className="absolute inset-0 bg-navy/30" onClick={() => setPendingWetId(null)} />
+            <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+              <div className="font-display font-bold text-lg text-navy">Affected material</div>
+              <p className="text-xs text-gray-400 mt-0.5">Tag this wet area for the drying log and estimate.</p>
+              <div className="flex bg-gray-100 rounded-full p-0.5 mt-3">
+                {WET_SURFACES.map(sf => (
+                  <button key={sf} onClick={() => setWet({ surface: sf })} className={`flex-1 py-1.5 rounded-full text-xs font-bold capitalize ${(wa.surface ?? 'floor') === sf ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{sf}</button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {WET_MATERIALS.map(m => (
+                  <button key={m} onClick={() => setWet({ material: m })} className={`px-3 py-1.5 rounded-full text-[13px] font-semibold ${wa.material === m ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{m}</button>
+                ))}
+              </div>
+              <button onClick={() => setPendingWetId(null)} className="btn-primary w-full py-3 justify-center mt-4">Done</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {paletteGhost && !paletteGhost.over && (
         <div className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-1/2 opacity-80 drop-shadow-lg"

@@ -132,9 +132,30 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
       {scene.walls.map(p => (
         <polygon key={'floor-' + p.id} points={ptsStr(p.points)} fill="#f4f7fb" />
       ))}
-      {scene.wetAreas.map(p => (
-        <path key={p.id} d={smoothClosedPath(p.points)} fill="#7DD3FC" fillOpacity={0.5} stroke="#0284c7" strokeWidth={3} strokeLinejoin="round" />
-      ))}
+      {scene.wetAreas.map(p => {
+        const c = polygonCentroid(p.points);
+        const lbl = p.material ? (p.surface && p.surface !== 'floor' ? `${p.surface[0].toUpperCase()}${p.surface.slice(1)} \u00b7 ${p.material}` : p.material) : null;
+        return (
+          <g key={p.id}>
+            <path d={smoothClosedPath(p.points)} fill="#7DD3FC" fillOpacity={0.5} stroke="#0284c7" strokeWidth={3} strokeLinejoin="round" />
+            {lbl && <text x={c[0]} y={c[1]} textAnchor="middle" dominantBaseline="central" fontSize={13} fontWeight={700} fill="#075985" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lbl}</text>}
+          </g>
+        );
+      })}
+      {/* S500: number each wall of every room */}
+      {scene.walls.map(w => w.points.map((_pt, ei) => {
+        const ep = edgePoints(scene, w.id, ei); if (!ep) return null;
+        const nrm = edgeInwardNormal(scene, w.id, ei);
+        const mx = (ep[0][0] + ep[1][0]) / 2 + nrm[0] * 16, my = (ep[0][1] + ep[1][1]) / 2 + nrm[1] * 16;
+        return <text key={w.id + '-wl-' + ei} x={mx} y={my} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#64748B" stroke="#fff" strokeWidth={3} paintOrder="stroke">{ei + 1}</text>;
+      }))}
+      {scene.originOfLoss && (
+        <g transform={`translate(${scene.originOfLoss[0]},${scene.originOfLoss[1]})`}>
+          <circle r={13} fill="#fff" stroke="#DC2626" strokeWidth={3} />
+          <line x1={-6} y1={-6} x2={6} y2={6} stroke="#DC2626" strokeWidth={3.5} strokeLinecap="round" />
+          <line x1={6} y1={-6} x2={-6} y2={6} stroke="#DC2626" strokeWidth={3.5} strokeLinecap="round" />
+        </g>
+      )}
       {scene.walls.map(p => <WallBand key={p.id} w={p} />)}
       {(scene.openings ?? []).map(op => <OpeningGlyph key={op.id} scene={scene} op={op} selected={op.id === selectedId} />)}
       {(scene.floodCuts ?? []).map((fc, i) => <FloodCutBand key={'fc' + i} scene={scene} fc={fc} />)}
