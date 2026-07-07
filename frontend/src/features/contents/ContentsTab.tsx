@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Camera, Trash2, Package } from 'lucide-react';
+import { Plus, Camera, Trash2, Package, Box } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { uploadMedia, signedUrl } from '../../lib/storage';
 import type { ContentsItem, Disposition } from '../../types/models';
 
-// Full Contents module: per-room inventory with photo, identifying details,
-// disposition, and replacement / actual cash value. Footer shows a running
-// Schedule of Loss total. Feeds the claim-level SoL report later.
+// Contents module: per-room personal-property inventory. Captures what carriers
+// need for the two contents outputs — the pack-out/handling of salvageable items
+// and the non-salvageable (total-loss) list that drives the ACV/RCV payout.
 
-const DISPOSITIONS: { value: Disposition; label: string; cls: string }[] = [
-  { value: 'restorable', label: 'Restorable', cls: 'bg-green-100 text-green-700' },
-  { value: 'non_restorable', label: 'Non-restorable', cls: 'bg-amber-100 text-amber-700' },
-  { value: 'disposed', label: 'Disposed', cls: 'bg-gray-200 text-gray-600' }
+const DISPOSITIONS: { value: Disposition; label: string; cls: string; on: string }[] = [
+  { value: 'restorable', label: 'Restorable', cls: 'bg-green-100 text-green-700', on: 'bg-green-600 text-white' },
+  { value: 'non_restorable', label: 'Total loss', cls: 'bg-red-100 text-red-700', on: 'bg-red-600 text-white' },
+  { value: 'disposed', label: 'Disposed', cls: 'bg-gray-200 text-gray-600', on: 'bg-gray-700 text-white' }
 ];
+const CATEGORIES = ['Furniture', 'Electronics', 'Textile / soft', 'Appliance', 'Document', 'High-value', 'Other'];
 
 type Draft = Partial<ContentsItem>;
 const blank: Draft = { quantity: 1, disposition: 'restorable' };
+const isLoss = (d?: Disposition | null) => d === 'non_restorable' || d === 'disposed';
 
 export function ContentsTab({ roomId, claimId, orgId }:
   { roomId: string; claimId: string; orgId: string }) {
@@ -80,16 +82,23 @@ export function ContentsTab({ roomId, claimId, orgId }:
         mediaId = (m as { id: string } | null)?.id ?? null;
       }
       const row = {
-        org_id: orgId, room_id: roomId, media_id: mediaId,
+        org_id: orgId, claim_id: claimId, room_id: roomId, media_id: mediaId,
         description: editing.description ?? null,
+        category: editing.category ?? null,
         brand: editing.brand ?? null,
         model: editing.model ?? null,
         serial: editing.serial ?? null,
         quantity: editing.quantity ?? 1,
         condition: editing.condition ?? null,
-        disposition: editing.disposition ?? null,
+        disposition: editing.disposition ?? 'restorable',
         replacement_cost: editing.replacement_cost ?? null,
-        acv: editing.acv ?? null
+        acv: editing.acv ?? null,
+        age_years: editing.age_years ?? null,
+        year_purchased: editing.year_purchased ?? null,
+        purchase_location: editing.purchase_location ?? null,
+        loss_reason: editing.loss_reason ?? null,
+        packed_out: editing.packed_out ?? false,
+        box_label: editing.box_label ?? null
       };
       if (editing.id) await supabase.from('resto_contents_items').update(row).eq('id', editing.id);
       else await supabase.from('resto_contents_items').insert(row);
@@ -106,57 +115,89 @@ export function ContentsTab({ roomId, claimId, orgId }:
     await load();
   }
 
-  const totalRcv = items.reduce((s, i) => s + (Number(i.replacement_cost) || 0) * (i.quantity || 1), 0);
-  const totalAcv = items.reduce((s, i) => s + (Number(i.acv) || 0) * (i.quantity || 1), 0);
+  const lossItems = items.filter(i => isLoss(i.disposition));
+  const totalRcv = lossItems.reduce((s, i) => s + (Number(i.replacement_cost) || 0) * (i.quantity || 1), 0);
+  const totalAcv = lossItems.reduce((s, i) => s + (Number(i.acv) || 0) * (i.quantity || 1), 0);
 
-  // ---- Editor ----
   if (editing) {
     const set = (k: keyof ContentsItem) => (v: any) => setEditing(p => ({ ...(p ?? {}), [k]: v }));
-    // Called inline ({field(...)}) rather than rendered as <F/> so the input is
-    // never remounted between keystrokes and keeps focus while typing.
-    const field = (label: string, k: keyof ContentsItem, type = 'text') => (
+    const field = (label: string, k: keyof ContentsItem, type = 'text', ph = '') => (
       <label className="block">
         <span className="text-xs font-medium text-gray-500">{label}</span>
-        <input type={type} inputMode={type === 'number' ? 'decimal' : undefined}
+        <input type={type} inputMode={type === 'number' ? 'decimal' : undefined} placeholder={ph}
                className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
                value={(editing[k] as any) ?? ''}
                onChange={e => set(k)(type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value)} />
       </label>
     );
+    const loss = isLoss(editing.disposition);
     return (
-      <div className="space-y-3">
+      <div className="space-y-3 pb-4">
         <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPickPhoto} />
         <button onClick={() => fileRef.current?.click()} className="btn-soft w-full py-3 text-sm">
           <Camera size={16} /> {draftPhotoUrl ? 'Replace photo' : 'Add photo'}
         </button>
         {draftPhotoUrl && <img src={draftPhotoUrl} className="w-full h-44 object-cover rounded-2xl" />}
 
-        {field('Description', 'description')}
+        {field('Item description', 'description', 'text', 'e.g. Leather sofa')}
+
+        <div>
+          <span className="text-xs font-medium text-gray-500">Category</span>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {CATEGORIES.map(c => (
+              <button key={c} onClick={() => set('category')(editing.category === c ? null : c)}
+                className={`px-2.5 py-1.5 rounded-full text-[12px] font-semibold ${editing.category === c ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{c}</button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <span className="text-xs font-medium text-gray-500">Disposition</span>
+          <div className="flex gap-1.5 mt-1">
+            {DISPOSITIONS.map(d => (
+              <button key={d.value} onClick={() => set('disposition')(d.value)}
+                className={`flex-1 py-2 rounded-xl text-[13px] font-bold ${editing.disposition === d.value ? d.on : 'bg-gray-100 text-gray-500'}`}>{d.label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {field('Quantity', 'quantity', 'number')}
+          {field('Condition', 'condition', 'text', 'e.g. soaked, mold')}
+        </div>
         <div className="grid grid-cols-2 gap-2">
           {field('Brand', 'brand')}
           {field('Model', 'model')}
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {field('Serial', 'serial')}
-          {field('Quantity', 'quantity', 'number')}
+        {field('Serial number', 'serial')}
+
+        <div className={`rounded-2xl p-3 space-y-3 ${loss ? 'bg-red-50' : 'bg-gray-50'}`}>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">
+            {loss ? 'Total-loss valuation (drives the payout)' : 'Valuation (optional)'}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {field('Replacement cost $', 'replacement_cost', 'number')}
+            {field('Actual cash value $', 'acv', 'number')}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {field('Age (years)', 'age_years', 'number')}
+            {field('Year purchased', 'year_purchased', 'number')}
+          </div>
+          {field('Where purchased', 'purchase_location', 'text', 'store / site')}
+          {loss && field('Reason non-salvageable', 'loss_reason', 'text', 'e.g. Cat 3 water, charred')}
         </div>
-        {field('Condition', 'condition')}
-        <label className="block">
-          <span className="text-xs font-medium text-gray-500">Disposition</span>
-          <select className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 mt-1 outline-none focus:border-sky"
-                  value={editing.disposition ?? 'restorable'}
-                  onChange={e => set('disposition')(e.target.value)}>
-            {DISPOSITIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-          </select>
-        </label>
-        <div className="grid grid-cols-2 gap-2">
-          {field('Replacement cost ($)', 'replacement_cost', 'number')}
-          {field('Actual cash value ($)', 'acv', 'number')}
+
+        <div className="rounded-2xl bg-gray-50 p-3 space-y-3">
+          <label className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-gray-600 flex items-center gap-2"><Box size={15} /> Packed out</span>
+            <input type="checkbox" className="w-5 h-5 accent-sky" checked={!!editing.packed_out} onChange={e => set('packed_out')(e.target.checked)} />
+          </label>
+          {editing.packed_out && field('Box / container label', 'box_label', 'text', 'e.g. Box 12')}
         </div>
 
         <div className="flex gap-2 pt-1">
           <button onClick={() => setEditing(null)} className="flex-1 btn-soft py-3 text-sm">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex-1 btn-primary py-3 text-sm disabled:opacity-50">
+          <button onClick={save} disabled={saving || !editing.description} className="flex-1 btn-primary py-3 text-sm disabled:opacity-50">
             {saving ? 'Saving...' : 'Save item'}
           </button>
         </div>
@@ -164,7 +205,6 @@ export function ContentsTab({ roomId, claimId, orgId }:
     );
   }
 
-  // ---- List ----
   return (
     <div className="space-y-2.5">
       <button onClick={openNew} className="btn-primary w-full py-3">
@@ -183,11 +223,12 @@ export function ContentsTab({ roomId, claimId, orgId }:
             <div className="flex-1 min-w-0" onClick={() => openEdit(it)}>
               <div className="font-bold text-sm truncate">{it.description ?? 'Untitled item'}</div>
               <div className="text-xs text-gray-400 font-medium truncate mt-0.5">
-                {[it.brand, it.model].filter(Boolean).join(' ') || '—'} · Qty {it.quantity ?? 1}
+                {[it.category, [it.brand, it.model].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || '—'} · Qty {it.quantity ?? 1}
               </div>
-              <div className="flex items-center gap-2 mt-1.5">
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 {disp && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${disp.cls}`}>{disp.label}</span>}
-                {it.replacement_cost != null && <span className="text-xs font-semibold text-gray-600">RCV ${Number(it.replacement_cost).toFixed(0)}</span>}
+                {it.packed_out && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-soft text-sky-deep">Packed out</span>}
+                {isLoss(it.disposition) && it.replacement_cost != null && <span className="text-xs font-semibold text-gray-600">${Number(it.replacement_cost).toFixed(0)} RCV</span>}
               </div>
             </div>
             <button onClick={() => remove(it.id)} className="text-gray-300 hover:text-red-500 self-start"><Trash2 size={16} /></button>
@@ -195,10 +236,10 @@ export function ContentsTab({ roomId, claimId, orgId }:
         );
       })}
 
-      {items.length > 0 && (
-        <div className="bg-aqua-soft rounded-2xl p-3.5 text-sm flex justify-between items-center mt-2">
-          <span className="text-aqua-deep font-semibold">Schedule of Loss · {items.length} items</span>
-          <span className="font-bold text-aqua-deep">RCV ${totalRcv.toFixed(0)} · ACV ${totalAcv.toFixed(0)}</span>
+      {lossItems.length > 0 && (
+        <div className="bg-red-50 rounded-2xl p-3.5 text-sm flex justify-between items-center mt-2">
+          <span className="text-red-700 font-semibold">Total loss · {lossItems.length} item{lossItems.length === 1 ? '' : 's'}</span>
+          <span className="font-bold text-red-700">${totalRcv.toFixed(0)} RCV · ${totalAcv.toFixed(0)} ACV</span>
         </div>
       )}
     </div>

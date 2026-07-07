@@ -67,5 +67,14 @@ export interface ContentsItem {
   disposition: Disposition | null;
   replacement_cost: number | null;
   acv: number | null;
+  category: string | null;
+  age_years: number | null;
+  year_purchased: number | null;
+  purchase_location: string | null;
+  loss_reason: string | null;
+  packed_out: boolean | null;
+  box_label: string | null;
+  claim_id: string | null;
+  room_label: string | null;
   created_at: string;
 }
