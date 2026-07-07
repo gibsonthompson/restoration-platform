@@ -1,4 +1,4 @@
-import { EQUIP_META, ptsStr, pointDisplay, smoothClosedPath, polygonCentroid, wallById, openingGeom, edgePoints, edgeInwardNormal, UNITS_PER_FT, type Arrow, type Containment, type Equip, type EquipType, type FloodCut, type MoisturePoint, type Opening, type Poly, type Pt, type Scene } from './sketchModel';
+import { EQUIP_META, ptsStr, pointDisplay, smoothClosedPath, polygonCentroid, wallById, openingGeom, edgePoints, edgeInwardNormal, floodCutEnds, UNITS_PER_FT, type Arrow, type Containment, type Equip, type EquipType, type FloodCut, type MoisturePoint, type Opening, type Poly, type Pt, type Scene } from './sketchModel';
 
 // Pictographic equipment icons (fan / dehumidifier unit / filter), identical to
 // the report engine (resto-map-svg.js) so the app and PDF match exactly.
@@ -6,20 +6,18 @@ import { EQUIP_META, ptsStr, pointDisplay, smoothClosedPath, polygonCentroid, wa
 function FloodCutBand({ scene, fc }: { scene: Scene; fc: FloodCut }) {
   const ep = edgePoints(scene, fc.wallId, fc.edge); if (!ep) return null;
   const nrm = edgeInwardNormal(scene, fc.wallId, fc.edge);
-  const [a, b] = ep;
-  const dx = b[0] - a[0], dy = b[1] - a[1], full = Math.hypot(dx, dy) || 1;
-  const ux = dx / full, uy = dy / full;
-  const lenU = fc.lengthFt != null ? Math.min(fc.lengthFt * UNITS_PER_FT, full) : full;
+  const ends = floodCutEnds(scene, fc); if (!ends) return null;
+  const lenU = ends.lenU;
   const off = 9;
-  const A: Pt = [a[0] + nrm[0] * off, a[1] + nrm[1] * off];
-  const B: Pt = [a[0] + ux * lenU + nrm[0] * off, a[1] + uy * lenU + nrm[1] * off];
+  const A: Pt = [ends.start[0] + nrm[0] * off, ends.start[1] + nrm[1] * off];
+  const B: Pt = [ends.end[0] + nrm[0] * off, ends.end[1] + nrm[1] * off];
   const mid: Pt = [(A[0] + B[0]) / 2 + nrm[0] * 12, (A[1] + B[1]) / 2 + nrm[1] * 12];
   const lf = Math.round(lenU / UNITS_PER_FT);
   const ht = fc.heightFt < 1 ? '4\u2033' : `${fc.heightFt}\u2032`;
   return (
     <g>
       <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#F59E0B" strokeWidth={7} strokeLinecap="round" strokeDasharray="2 7" opacity={0.95} />
-      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} LF \u00b7 {ht} cut</text>
+      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} linear ft \u00b7 {ht} cut</text>
     </g>
   );
 }

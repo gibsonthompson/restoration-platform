@@ -3,13 +3,14 @@ import { X, Undo2, Save, Move, Square, Droplet, Grid3x3, Plus, Minus, Trash2, Ma
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import {
+  type FloodCut,
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
-  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, edgeLenFt, FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
+  sceneFloorSqFt, suggestEquipment, smoothClosedPath, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, edgeLenFt, floodCutEnds, projectToEdgeFt, FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, SCENE_SIZE, UNITS_PER_FT, EQUIP_META, type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
 type RoomMode = 'rect' | 'poly';
-type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap';
+type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle';
 interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
 
@@ -73,6 +74,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const [activeWetId, setActiveWetId] = useState<string | null>(null);
   const [pendingReading, setPendingReading] = useState<{ id?: string; x: number; y: number } | null>(null);
   const [pendingFlood, setPendingFlood] = useState<{ wallId: string; edge: number } | null>(null);
+  const [selectedFlood, setSelectedFlood] = useState<{ wallId: string; edge: number } | null>(null);
   const [pendingContain, setPendingContain] = useState<{ id: string; isNew: boolean } | null>(null);
   const [rdgValue, setRdgValue] = useState('');
   const [rdgMaterial, setRdgMaterial] = useState<string | undefined>(undefined);
@@ -95,7 +97,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number } }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end' }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -187,9 +189,21 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     } else if (tool === 'arrow') {
       const { p } = snapPoint(sO); g.current.kind = 'arrow'; setDraft({ kind: 'arrow', from: p, to: p }); showActive(sO, pxO);
     } else if (tool === 'floodcut') {
-      g.current.kind = 'floodTap';
-      const near = nearestWallEdge(scene, s[0], s[1]);
-      g.current.floodEdge = near && near.dist < 45 ? { wallId: near.wallId, edge: near.edge } : undefined;
+      const kNow = viewRef.current.k, HIT = 30 / kNow;
+      if (selectedFlood) {
+        const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
+        const ends = fc ? floodCutEnds(scene, fc) : null;
+        if (ends) {
+          const dS = Math.hypot(s[0] - ends.start[0], s[1] - ends.start[1]);
+          const dE = Math.hypot(s[0] - ends.end[0], s[1] - ends.end[1]);
+          if (Math.min(dS, dE) < HIT) { snapshot(); g.current.kind = 'floodHandle'; g.current.floodWhich = dS <= dE ? 'start' : 'end'; showActive(sO, pxO); }
+        }
+      }
+      if (g.current.kind !== 'floodHandle') {
+        g.current.kind = 'floodTap';
+        const near = nearestWallEdge(scene, s[0], s[1]);
+        g.current.floodEdge = near && near.dist < 45 ? { wallId: near.wallId, edge: near.edge } : undefined;
+      }
     } else if (tool === 'containment') {
       g.current.kind = 'containTap'; g.current.downScene = s;
     } else {
@@ -244,6 +258,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     }
     else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
     else if (g.current.kind === 'floodTap' || g.current.kind === 'containTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } }
+    else if (g.current.kind === 'floodHandle' && selectedFlood) {
+      showActive(sO, pxO);
+      const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
+      if (fc) {
+        const full = edgeLenFt(scene, fc.wallId, fc.edge);
+        const proj = Math.round(projectToEdgeFt(scene, fc.wallId, fc.edge, sO) * 4) / 4;
+        const start = fc.startFt ?? 0;
+        const end = start + (fc.lengthFt != null ? Math.min(fc.lengthFt, full - start) : full - start);
+        if (g.current.floodWhich === 'start') { const ns = Math.max(0, Math.min(proj, end - 0.25)); updateFlood(selectedFlood, { startFt: ns, lengthFt: end - ns }); }
+        else { const ne = Math.max(start + 0.25, Math.min(proj, full)); updateFlood(selectedFlood, { lengthFt: ne - start }); }
+      }
+    }
     g.current.lastPx = px;
   }
 
@@ -280,11 +306,14 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       const { from, to } = draft;
       if (Math.hypot(to[0] - from[0], to[1] - from[1]) >= GRID) { snapshot(); setScene(sc => ({ ...sc, arrows: [...(sc.arrows ?? []), { id: uid(), from, to }] })); }
       setDraft(null);
-    } else if (g.current.kind === 'floodTap' && !g.current.moved && g.current.floodEdge) {
+    } else if (g.current.kind === 'floodTap' && !g.current.moved) {
       const fe = g.current.floodEdge;
-      const exists = (scene.floodCuts ?? []).some(f => f.wallId === fe.wallId && f.edge === fe.edge);
-      if (!exists) { snapshot(); setScene(sc => ({ ...sc, floodCuts: [...(sc.floodCuts ?? []), { wallId: fe.wallId, edge: fe.edge, heightFt: 2 }] })); }
-      setPendingFlood({ wallId: fe.wallId, edge: fe.edge });
+      if (fe) {
+        const exists = (scene.floodCuts ?? []).some(f => f.wallId === fe.wallId && f.edge === fe.edge);
+        if (!exists) { snapshot(); setScene(sc => ({ ...sc, floodCuts: [...(sc.floodCuts ?? []), { wallId: fe.wallId, edge: fe.edge, heightFt: 2 }] })); }
+        setSelectedFlood({ wallId: fe.wallId, edge: fe.edge });
+        setPendingFlood({ wallId: fe.wallId, edge: fe.edge });
+      } else { setSelectedFlood(null); }
     } else if (g.current.kind === 'containTap' && !g.current.moved && g.current.downScene) {
       const pt = g.current.downScene, id = uid();
       snapshot(); setScene(sc => ({ ...sc, containments: [...(sc.containments ?? []), { id, x: pt[0], y: pt[1], widthFt: 3, heightFt: 8 }] }));
@@ -332,6 +361,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
     setDraft(null); setActive(null); setGuide(null);
   }
+  const updateFlood = (sel: { wallId: string; edge: number }, patch: Partial<FloodCut>) =>
+    setScene(sc => ({ ...sc, floodCuts: (sc.floodCuts ?? []).map(f => (f.wallId === sel.wallId && f.edge === sel.edge ? { ...f, ...patch } : f)) }));
   function finishWet() { if (!activeWetId) return; setPendingWetId(activeWetId); setActiveWetId(null); }
   function saveReading() {
     if (!pendingReading) return;
@@ -490,6 +521,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
     if (PLACE_SET.includes(t)) setLastPlace(t);
     if (t === 'floodcut' || t === 'containment') setLastScope(t);
     if (activeWetId && t !== 'wet') { setPendingWetId(activeWetId); setActiveWetId(null); }
+    if (t !== 'floodcut') setSelectedFlood(null);
     setSelectedId(null); setDraft(null); setActive(null); setGuide(null);
   };
 
@@ -574,6 +606,22 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       )}
 
 
+      {tool === 'floodcut' && selectedFlood && (() => {
+        const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
+        const ends = fc ? floodCutEnds(scene, fc) : null;
+        if (!ends) return null;
+        return (
+          <g style={{ pointerEvents: 'none' }}>
+            <line x1={ends.start[0]} y1={ends.start[1]} x2={ends.end[0]} y2={ends.end[1]} stroke="#F59E0B" strokeWidth={3} vectorEffect="non-scaling-stroke" opacity={0.5} />
+            {[ends.start, ends.end].map((pt, i) => (
+              <g key={i}>
+                <circle cx={pt[0]} cy={pt[1]} r={13 / k} fill="#fff" stroke="#F59E0B" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+                <circle cx={pt[0]} cy={pt[1]} r={4.5 / k} fill="#F59E0B" />
+              </g>
+            ))}
+          </g>
+        );
+      })()}
       {tool === 'wet' && active && (
         <circle cx={active.scene[0]} cy={active.scene[1]} r={WET_BRUSH / 2} fill="#7DD3FC" fillOpacity={0.25} stroke="#0284c7" strokeWidth={2} vectorEffect="non-scaling-stroke" />
       )}
@@ -742,7 +790,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           </div>
           <div className="flex items-center px-3 pb-2">
             {tool === 'floodcut'
-              ? <span className="text-[12px] font-extrabold text-amber-700">{fcStats.lf.toFixed(0)} LF \u00b7 {fcStats.sqft.toFixed(0)} sq ft removed</span>
+              ? <span className="text-[12px] font-extrabold text-amber-700">{fcStats.lf.toFixed(0)} linear ft \u00b7 {fcStats.sqft.toFixed(0)} sq ft removed</span>
               : <span className="text-[12px] font-extrabold text-violet-700">{cStats.count} barrier{cStats.count === 1 ? '' : 's'} \u00b7 {cStats.sqft.toFixed(0)} sq ft</span>}
           </div>
         </div>
@@ -846,13 +894,20 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
                   className="w-16 border border-gray-200 rounded-xl px-2 py-1.5 text-sm font-bold text-center focus:outline-none focus:border-sky" />
                 <span className="self-center text-xs text-gray-400">ft</span>
               </div>
-              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Cut length (LF)</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Cut length</label>
               <div className="flex gap-2 mt-1 items-center">
                 <input value={len.toFixed(1)} onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setFc({ lengthFt: Math.max(0, Math.min(n, full)) }); }} inputMode="decimal"
                   className="flex-1 border border-gray-200 rounded-xl px-3.5 py-2.5 text-[16px] font-bold focus:outline-none focus:border-sky" />
                 <span className="text-xs text-gray-400">ft</span>
-                <button onClick={() => setFc({ lengthFt: undefined })} className="px-3 py-2 rounded-xl text-xs font-bold bg-gray-100 text-gray-600">Full wall</button>
+                <button onClick={() => setFc({ lengthFt: undefined, startFt: 0 })} className="px-3 py-2 rounded-xl text-xs font-bold bg-gray-100 text-gray-600">Full wall</button>
               </div>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Start from corner</label>
+              <div className="flex gap-2 mt-1 items-center">
+                <input value={(fc.startFt ?? 0).toFixed(1)} onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) { const ns = Math.max(0, Math.min(n, full - 0.25)); setFc({ startFt: ns, lengthFt: Math.min(fc.lengthFt ?? (full - ns), full - ns) }); } }} inputMode="decimal"
+                  className="flex-1 border border-gray-200 rounded-xl px-3.5 py-2.5 text-[16px] font-bold focus:outline-none focus:border-sky" />
+                <span className="text-xs text-gray-400">ft</span>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">Tip: after closing, drag the two dots on the wall to slide or resize the cut.</p>
               <div className="flex gap-2 mt-4">
                 <button onClick={remove} className="flex-1 border border-red-200 rounded-xl py-3 font-semibold text-red-600 active:bg-red-50">Remove</button>
                 <button onClick={() => setPendingFlood(null)} className="btn-primary flex-1 py-3 justify-center">Done</button>
