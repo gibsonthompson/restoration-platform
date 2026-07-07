@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { SubHeader } from '../../components/SubHeader';
 import { grainsPerPound, dewPointF, airMoversNeeded, dehumidifiersNeeded } from './psychrometrics';
+import { DryingProgress } from './DryingProgress';
 
 interface Chamber {
   id: string; name: string; length_ft: number | null; width_ft: number | null;
@@ -13,7 +14,7 @@ interface Chamber {
 interface Reading {
   id: string; reading_type: string; location_label: string | null;
   temp_f: number | null; rh_pct: number | null; gpp: number | null;
-  dew_point: number | null; captured_at: string;
+  dew_point: number | null; material_mc: number | null; material: string | null; captured_at: string;
 }
 interface DryStd { id: string; material: string; goal_value: number | null; }
 
@@ -32,6 +33,7 @@ export default function HydroPage() {
   const { activeOrg } = useOrg();
   const [chambers, setChambers] = useState<Chamber[]>([]);
   const [sel, setSel] = useState<Chamber | null>(null);
+  const [newName, setNewName] = useState<string | null>(null);
 
   async function load() {
     if (!structureId) return;
@@ -41,13 +43,12 @@ export default function HydroPage() {
   }
   useEffect(() => { void load(); }, [structureId]);
 
-  async function addChamber() {
-    if (!activeOrg || !structureId) return;
-    const name = prompt('Chamber name (e.g. Basement, Main Level)');
-    if (!name) return;
+  async function createChamber() {
+    if (!activeOrg || !structureId || !newName || !newName.trim()) { setNewName(null); return; }
     const { data } = await supabase.from('resto_drying_chambers')
-      .insert({ org_id: activeOrg.id, structure_id: structureId, name, height_ft: 8, class_of_loss: 2 })
+      .insert({ org_id: activeOrg.id, structure_id: structureId, name: newName.trim(), height_ft: 8, class_of_loss: 2 })
       .select('*').single();
+    setNewName(null);
     await load();
     if (data) setSel(data as Chamber);
   }
@@ -58,7 +59,7 @@ export default function HydroPage() {
     <div>
       <SubHeader title="Hydro: Job Setup" subtitle="S500 structural drying" />
       <div className="p-4 space-y-3">
-        <button onClick={addChamber} className="btn-primary w-full py-3">
+        <button onClick={() => setNewName('')} className="btn-primary w-full py-3">
           <Plus size={16} /> Add drying chamber
         </button>
         {chambers.length === 0 && <p className="text-gray-400 text-sm px-1">No drying chambers yet.</p>}
@@ -76,11 +77,31 @@ export default function HydroPage() {
           </button>
         ))}
       </div>
+      {newName !== null && <ChamberNameSheet value={newName} onChange={setNewName} onSave={createChamber} onClose={() => setNewName(null)} />}
     </div>
   );
 }
 
 // Downscale a photo to a base64 JPEG small enough to POST for OCR.
+function ChamberNameSheet({ value, onChange, onSave, onClose }:
+  { value: string; onChange: (v: string) => void; onSave: () => void; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-navy/30" onClick={onClose} />
+      <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+        <div className="font-display font-bold text-lg text-navy">New drying chamber</div>
+        <p className="text-xs text-gray-400 mt-0.5">Group the rooms that dry together (e.g. Basement, Main Level).</p>
+        <input autoFocus placeholder="Chamber name" value={value} onChange={e => onChange(e.target.value)}
+          className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] outline-none focus:border-sky" />
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+          <button onClick={onSave} disabled={!value.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Create</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 async function fileToScaledBase64(file: File, max = 1400): Promise<string> {
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file);
@@ -98,7 +119,8 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
   const [c, setC] = useState<Chamber>(chamber);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [stds, setStds] = useState<DryStd[]>([]);
-  const [form, setForm] = useState({ reading_type: 'psychrometric', location_label: '', temp_f: '', rh_pct: '' });
+  const [form, setForm] = useState({ reading_type: 'psychrometric', location_label: '', temp_f: '', rh_pct: '', mc_value: '', material: '' });
+  const [stdDraft, setStdDraft] = useState<{ material: string; goal: string } | null>(null);
   const [ocr, setOcr] = useState(false);
   const meterRef = useRef<HTMLInputElement>(null);
 
@@ -146,6 +168,18 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
   }
 
   async function addReading() {
+    if (form.reading_type === 'material_mc') {
+      const mc = parseFloat(form.mc_value);
+      if (Number.isNaN(mc)) { alert('Enter the moisture content %.'); return; }
+      await supabase.from('resto_readings').insert({
+        org_id: orgId, chamber_id: c.id, reading_type: 'material_mc',
+        location_label: form.location_label || null, material_mc: mc, material: form.material || null,
+        captured_at: new Date().toISOString()
+      });
+      setForm({ ...form, location_label: '', mc_value: '' });
+      await loadAll();
+      return;
+    }
     const temp = parseFloat(form.temp_f), rh = parseFloat(form.rh_pct);
     if (Number.isNaN(temp) || Number.isNaN(rh)) { alert('Enter temperature and RH.'); return; }
     const gpp = grainsPerPound(temp, rh);
@@ -159,13 +193,13 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
     await loadAll();
   }
 
-  async function addStd() {
-    const material = prompt('Material (e.g. drywall, subfloor)');
-    if (!material) return;
-    const g = prompt('Dry standard goal (e.g. moisture % or GPP)');
+  async function saveStd() {
+    if (!stdDraft || !stdDraft.material.trim()) { setStdDraft(null); return; }
     await supabase.from('resto_dry_standards').insert({
-      org_id: orgId, chamber_id: c.id, material, goal_value: g ? parseFloat(g) : null
+      org_id: orgId, chamber_id: c.id, material: stdDraft.material.trim(),
+      goal_value: stdDraft.goal ? parseFloat(stdDraft.goal) : null
     });
+    setStdDraft(null);
     await loadAll();
   }
 
@@ -244,7 +278,7 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
         <div className="card">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm font-bold flex items-center gap-1"><Target size={15} className="text-brand" /> Dry Standards</div>
-            <button onClick={addStd} className="text-brand text-sm font-medium">+ Add</button>
+            <button onClick={() => setStdDraft({ material: '', goal: '' })} className="text-brand text-sm font-medium">+ Add</button>
           </div>
           {stds.length === 0 && <p className="text-xs text-gray-400">No dry standards set.</p>}
           {stds.map(s => (
@@ -263,23 +297,37 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
           </select>
           <input className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Location label (e.g. NW corner)"
                  value={form.location_label} onChange={e => setForm({ ...form, location_label: e.target.value })} />
-          <div className="grid grid-cols-2 gap-2">
-            <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Temp F"
-                   value={form.temp_f} onChange={e => setForm({ ...form, temp_f: e.target.value })} />
-            <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="RH %"
-                   value={form.rh_pct} onChange={e => setForm({ ...form, rh_pct: e.target.value })} />
-          </div>
-          {form.temp_f && form.rh_pct && !Number.isNaN(parseFloat(form.temp_f)) && !Number.isNaN(parseFloat(form.rh_pct)) && (
-            <div className="text-xs text-gray-500">
-              = {grainsPerPound(parseFloat(form.temp_f), parseFloat(form.rh_pct))} GPP · dew {dewPointF(parseFloat(form.temp_f), parseFloat(form.rh_pct))}F
+          {form.reading_type === 'material_mc' ? (
+            <div className="grid grid-cols-2 gap-2">
+              <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Moisture %"
+                     value={form.mc_value} onChange={e => setForm({ ...form, mc_value: e.target.value })} />
+              <input className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Material (drywall, wood)"
+                     value={form.material} onChange={e => setForm({ ...form, material: e.target.value })} />
             </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Temp F"
+                       value={form.temp_f} onChange={e => setForm({ ...form, temp_f: e.target.value })} />
+                <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="RH %"
+                       value={form.rh_pct} onChange={e => setForm({ ...form, rh_pct: e.target.value })} />
+              </div>
+              {form.temp_f && form.rh_pct && !Number.isNaN(parseFloat(form.temp_f)) && !Number.isNaN(parseFloat(form.rh_pct)) && (
+                <div className="text-xs text-gray-500">
+                  = {grainsPerPound(parseFloat(form.temp_f), parseFloat(form.rh_pct))} GPP · dew {dewPointF(parseFloat(form.temp_f), parseFloat(form.rh_pct))}F
+                </div>
+              )}
+              <input ref={meterRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onMeterPhoto} />
+              <button onClick={() => meterRef.current?.click()} disabled={ocr} className="btn-soft w-full py-2.5 text-sm disabled:opacity-50">
+                <Camera size={15} /> {ocr ? 'Reading meter...' : 'Snap meter photo'}
+              </button>
+            </>
           )}
-          <input ref={meterRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onMeterPhoto} />
-          <button onClick={() => meterRef.current?.click()} disabled={ocr} className="btn-soft w-full py-2.5 text-sm disabled:opacity-50">
-            <Camera size={15} /> {ocr ? 'Reading meter...' : 'Snap meter photo'}
-          </button>
           <button onClick={addReading} className="btn-primary w-full py-2.5 text-sm">Log reading</button>
         </div>
+
+        {/* Dry map: analysis, trend, goal comparison */}
+        <DryingProgress readings={readings} stds={stds} />
 
         {/* Drying log */}
         <div>
@@ -303,6 +351,25 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
           ))}
         </div>
       </div>
+      {stdDraft && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-navy/30" onClick={() => setStdDraft(null)} />
+          <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+            <div className="font-display font-bold text-lg text-navy">Dry standard</div>
+            <p className="text-xs text-gray-400 mt-0.5">Target moisture content for a material (e.g. drywall 1%, wood 15%).</p>
+            <input autoFocus placeholder="Material (drywall, subfloor, wood)" value={stdDraft.material}
+              onChange={e => setStdDraft({ ...stdDraft, material: e.target.value })}
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] outline-none focus:border-sky" />
+            <input inputMode="decimal" placeholder="Dry goal (% or GPP)" value={stdDraft.goal}
+              onChange={e => setStdDraft({ ...stdDraft, goal: e.target.value })}
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-2 text-[16px] outline-none focus:border-sky" />
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setStdDraft(null)} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+              <button onClick={saveStd} disabled={!stdDraft.material.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
