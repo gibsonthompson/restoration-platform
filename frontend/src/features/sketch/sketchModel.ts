@@ -7,7 +7,7 @@ export type Pt = [number, number];
 
 export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint
 // Xactimate-shaped demo/prep scope, measured from sketch geometry:
-export interface FloodCut { wallId: string; edge: number; heightFt: number; lengthFt?: number; }   // DRYW flood-cut: LF (lengthFt or full edge) at cut height
+export interface FloodCut { wallId: string; edge: number; heightFt: number; lengthFt?: number; startFt?: number; }   // DRYW flood-cut: LF at cut height, positioned startFt from the edge start
 export interface Containment { id: string; heightFt: number; x?: number; y?: number; widthFt?: number; label?: string; from?: Pt; to?: Pt; }   // PLASTIC barrier: width x height (tap-placed); from/to legacy
 export interface Equip { id: string; type: EquipType; x: number; y: number; }
 export interface Arrow { id: string; from: Pt; to: Pt; }   // water migration direction (S500)
@@ -285,4 +285,21 @@ export function wetSqFt(w: Poly): number {
     return area / (UNITS_PER_FT * UNITS_PER_FT);
   }
   return polygonArea(w.points) / (UNITS_PER_FT * UNITS_PER_FT);
+}
+
+// Flood-cut segment endpoints on the wall edge (positioned by startFt, sized by lengthFt)
+export function floodCutEnds(scene: Scene, fc: FloodCut): { a: Pt; ux: number; uy: number; full: number; startU: number; lenU: number; start: Pt; end: Pt } | null {
+  const ep = edgePoints(scene, fc.wallId, fc.edge); if (!ep) return null;
+  const [a, b] = ep; const dx = b[0] - a[0], dy = b[1] - a[1], full = Math.hypot(dx, dy) || 1;
+  const ux = dx / full, uy = dy / full;
+  const startU = Math.max(0, Math.min((fc.startFt ?? 0) * UNITS_PER_FT, full));
+  const lenU = fc.lengthFt != null ? Math.min(fc.lengthFt * UNITS_PER_FT, full - startU) : (full - startU);
+  return { a, ux, uy, full, startU, lenU, start: [a[0] + ux * startU, a[1] + uy * startU], end: [a[0] + ux * (startU + lenU), a[1] + uy * (startU + lenU)] };
+}
+// Project a scene point onto the wall edge; return distance-from-start in FEET (clamped to the wall)
+export function projectToEdgeFt(scene: Scene, wallId: string, edge: number, pt: Pt): number {
+  const ep = edgePoints(scene, wallId, edge); if (!ep) return 0;
+  const [a, b] = ep; const dx = b[0] - a[0], dy = b[1] - a[1], full2 = dx * dx + dy * dy || 1;
+  const t = ((pt[0] - a[0]) * dx + (pt[1] - a[1]) * dy) / full2;
+  return Math.max(0, Math.min(1, t)) * Math.sqrt(full2) / UNITS_PER_FT;
 }
