@@ -8,6 +8,7 @@ import { uploadMedia, signedUrl } from '../lib/storage';
 import { ContentsTab } from '../features/contents/ContentsTab';
 import { SketchesTab } from '../features/sketch/SketchesTab';
 import type { Note, Room } from '../types/models';
+import { NoteSheet } from '../components/NoteSheet';
 
 type Tab = 'photos' | 'notes' | 'contents' | 'sketches';
 
@@ -33,6 +34,7 @@ export default function RoomDetail() {
   const [room, setRoom] = useState<Room | null>(null);
   const [tab, setTab] = useState<Tab>('photos');
   const [notes, setNotes] = useState<Note[]>([]);
+  const [noteEdit, setNoteEdit] = useState<{ id?: string; body: string } | null>(null);
   const [media, setMedia] = useState<MediaRow[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [scans, setScans] = useState<Record<string, MoldScan>>({});
@@ -115,13 +117,16 @@ export default function RoomDetail() {
     setViewer(v => (v ? { ...v, caption: c || null } : v));
   }
 
-  async function addNote() {
-    if (!activeOrg || !roomId) return;
-    const body = prompt('Note (e.g. measurements / scope)');
-    if (!body) return;
-    await supabase.from('resto_notes').insert({
-      org_id: activeOrg.id, claim_id: claimId, room_id: roomId, body
-    });
+  async function saveNote(body: string) {
+    if (!activeOrg || !roomId || !noteEdit) return;
+    if (noteEdit.id) await supabase.from('resto_notes').update({ body }).eq('id', noteEdit.id);
+    else await supabase.from('resto_notes').insert({ org_id: activeOrg.id, claim_id: claimId, room_id: roomId, body });
+    setNoteEdit(null);
+    void loadNotes();
+  }
+  async function deleteNote() {
+    if (noteEdit?.id) await supabase.from('resto_notes').delete().eq('id', noteEdit.id);
+    setNoteEdit(null);
     void loadNotes();
   }
 
@@ -218,14 +223,20 @@ export default function RoomDetail() {
 
         {tab === 'notes' && (
           <div className="space-y-2">
-            <button onClick={addNote} className="btn-primary w-full py-3">
+            <button onClick={() => setNoteEdit({ body: '' })} className="btn-primary w-full py-3">
               <Plus size={16} /> Add note
             </button>
             {notes.length === 0 && <p className="text-gray-400 text-sm">There are no notes in this room.</p>}
             {notes.map(n => (
-              <div key={n.id} className="card whitespace-pre-wrap text-sm">{n.body}</div>
+              <div key={n.id} onClick={() => setNoteEdit({ id: n.id, body: n.body })}
+                className="card whitespace-pre-wrap text-sm active:scale-[.99] transition cursor-pointer">{n.body}</div>
             ))}
           </div>
+        )}
+        {noteEdit && (
+          <NoteSheet title={noteEdit.id ? 'Edit note' : 'New note'} initial={noteEdit.body}
+            placeholder="Measurements, scope, observations…"
+            onSave={saveNote} onDelete={noteEdit.id ? deleteNote : undefined} onClose={() => setNoteEdit(null)} />
         )}
 
         {tab === 'contents' && activeOrg && claimId && roomId && (
