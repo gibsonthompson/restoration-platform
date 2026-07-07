@@ -27,6 +27,7 @@ function distToSeg(p: Pt, a: Pt, b: Pt): number {
 const WET_BRUSH = 48;   // wet paint brush width (scene units, ~1.2 ft)
 const READING_MATERIALS = ['Drywall', 'Wood / Framing', 'Subfloor', 'Concrete', 'Plaster', 'Carpet', 'Baseboard', 'Hardwood'];
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
+const dimFt = (u: number) => `${(u / UNITS_PER_FT).toFixed(1)} ft`;
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
 // Palette stickers — the same icons that get placed on the map, so a tech sees
@@ -598,7 +599,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           {polyDraft.pts.slice(1).map((pt, i) => {
             const a = polyDraft.pts[i]; const mid: Pt = [(a[0] + pt[0]) / 2, (a[1] + pt[1]) / 2];
             const len = Math.hypot(pt[0] - a[0], pt[1] - a[1]);
-            return <text key={i} x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12 / k} fontWeight={700} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke">{ftLabel(len)}</text>;
+            return <text key={i} x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12 / k} fontWeight={700} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke">{dimFt(len)}</text>;
           })}
           {polyDraft.pts.map((pt, i) => (
             <circle key={i} cx={pt[0]} cy={pt[1]} r={(i === 0 ? 9 : 6) / k} fill={i === 0 ? '#1483C2' : '#fff'} stroke="#1483C2" strokeWidth={2.5 / k} />
@@ -744,9 +745,17 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
             {content}
             {isCustom && chScene && (
               <g style={{ pointerEvents: 'none' }}>
-                {polyDraft && polyDraft.pts.length > 0 && (
-                  <line x1={polyDraft.pts[polyDraft.pts.length - 1][0]} y1={polyDraft.pts[polyDraft.pts.length - 1][1]} x2={chScene[0]} y2={chScene[1]} stroke="#1483C2" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeDasharray="6 5" opacity={0.7} />
-                )}
+                {polyDraft && polyDraft.pts.length > 0 && (() => {
+                  const last = polyDraft.pts[polyDraft.pts.length - 1];
+                  const mid: Pt = [(last[0] + chScene[0]) / 2, (last[1] + chScene[1]) / 2];
+                  const len = Math.hypot(chScene[0] - last[0], chScene[1] - last[1]);
+                  return (
+                    <>
+                      <line x1={last[0]} y1={last[1]} x2={chScene[0]} y2={chScene[1]} stroke="#1483C2" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeDasharray="6 5" opacity={0.7} />
+                      {len > 4 && <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={13 / k} fontWeight={800} fill="#1483C2" stroke="#fff" strokeWidth={4.5 / k} paintOrder="stroke">{dimFt(len)}</text>}
+                    </>
+                  );
+                })()}
                 <circle cx={chScene[0]} cy={chScene[1]} r={6 / k} fill="#1483C2" fillOpacity={0.35} stroke="#1483C2" strokeWidth={2 / k} />
               </g>
             )}
