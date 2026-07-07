@@ -10,7 +10,7 @@ import {
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
 type RoomMode = 'rect' | 'poly';
-type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle';
+type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle' | 'floodMove';
 interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
 
@@ -18,6 +18,12 @@ const PLACE_SET: Tool[] = ['equip', 'reading', 'origin'];   // grouped under the
 const GRID = 40;            // scene units per grid square (1 ft)
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const OFF = 50; // offset-cursor: place target up-left of the finger so it's never under the thumb
+function distToSeg(p: Pt, a: Pt, b: Pt): number {
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+  if (l2 === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
 const WET_BRUSH = 48;   // wet paint brush width (scene units, ~1.2 ft)
 const READING_MATERIALS = ['Drywall', 'Wood / Framing', 'Subfloor', 'Concrete', 'Plaster', 'Carpet', 'Baseboard', 'Hardwood'];
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
@@ -97,7 +103,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end' }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end'; floodGrab?: number }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -193,13 +199,14 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
       if (selectedFlood) {
         const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
         const ends = fc ? floodCutEnds(scene, fc) : null;
-        if (ends) {
+        if (ends && fc) {
           const dS = Math.hypot(s[0] - ends.start[0], s[1] - ends.start[1]);
           const dE = Math.hypot(s[0] - ends.end[0], s[1] - ends.end[1]);
           if (Math.min(dS, dE) < HIT) { snapshot(); g.current.kind = 'floodHandle'; g.current.floodWhich = dS <= dE ? 'start' : 'end'; showActive(sO, pxO); }
+          else if (distToSeg(s, ends.start, ends.end) < 22 / kNow) { snapshot(); g.current.kind = 'floodMove'; g.current.floodGrab = projectToEdgeFt(scene, fc.wallId, fc.edge, s) - (fc.startFt ?? 0); showActive(sO, pxO); }
         }
       }
-      if (g.current.kind !== 'floodHandle') {
+      if (g.current.kind !== 'floodHandle' && g.current.kind !== 'floodMove') {
         g.current.kind = 'floodTap';
         const near = nearestWallEdge(scene, s[0], s[1]);
         g.current.floodEdge = near && near.dist < 45 ? { wallId: near.wallId, edge: near.edge } : undefined;
@@ -268,6 +275,17 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         const end = start + (fc.lengthFt != null ? Math.min(fc.lengthFt, full - start) : full - start);
         if (g.current.floodWhich === 'start') { const ns = Math.max(0, Math.min(proj, end - 0.25)); updateFlood(selectedFlood, { startFt: ns, lengthFt: end - ns }); }
         else { const ne = Math.max(start + 0.25, Math.min(proj, full)); updateFlood(selectedFlood, { lengthFt: ne - start }); }
+      }
+    }
+    else if (g.current.kind === 'floodMove' && selectedFlood) {
+      showActive(sO, pxO);
+      const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
+      if (fc) {
+        const full = edgeLenFt(scene, fc.wallId, fc.edge);
+        const length = fc.lengthFt != null ? Math.min(fc.lengthFt, full) : full;
+        const proj = Math.round(projectToEdgeFt(scene, fc.wallId, fc.edge, sO) * 4) / 4;
+        const ns = Math.max(0, Math.min(proj - (g.current.floodGrab ?? 0), full - length));
+        updateFlood(selectedFlood, { startFt: ns, lengthFt: length });
       }
     }
     g.current.lastPx = px;
@@ -502,8 +520,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
   const rw = rectDraft ? Math.abs(rectDraft.b[0] - rectDraft.a[0]) : 0, rh = rectDraft ? Math.abs(rectDraft.b[1] - rectDraft.a[1]) : 0;
   const polyDraft = draft?.kind === 'poly' ? draft : null;
   const drawReadout = rectDraft
-    ? `${ftLabel(rw)} \u00d7 ${ftLabel(rh)} \u00b7 ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
-    : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 aim at the first corner to close' : ''}` : null;
+    ? `${ftLabel(rw)} × ${ftLabel(rh)} · ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
+    : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' · aim at the first corner to close' : ''}` : null;
   const fingerScene = active && tool !== 'room' && tool !== 'wet' ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
     am: scene.equipment.filter(e => e.type === 'air_mover').length,
@@ -790,8 +808,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
           </div>
           <div className="flex items-center px-3 pb-2">
             {tool === 'floodcut'
-              ? <span className="text-[12px] font-extrabold text-amber-700">{fcStats.lf.toFixed(0)} linear ft \u00b7 {fcStats.sqft.toFixed(0)} sq ft removed</span>
-              : <span className="text-[12px] font-extrabold text-violet-700">{cStats.count} barrier{cStats.count === 1 ? '' : 's'} \u00b7 {cStats.sqft.toFixed(0)} sq ft</span>}
+              ? <span className="text-[12px] font-extrabold text-amber-700">{fcStats.lf.toFixed(0)} linear ft · {fcStats.sqft.toFixed(0)} sq ft removed</span>
+              : <span className="text-[12px] font-extrabold text-violet-700">{cStats.count} barrier{cStats.count === 1 ? '' : 's'} · {cStats.sqft.toFixed(0)} sq ft</span>}
           </div>
         </div>
       )}
@@ -850,7 +868,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
         {tool === 'arrow' && 'Drag from the water source toward where it traveled.'}
         {tool === 'door' && `Drag along a wall to position the ${doorKind}. The highlight shows where it attaches.`}
-        {tool === 'floodcut' && 'Tap a wall that was cut, then set the height and length.'}
+        {tool === 'floodcut' && 'Tap a wall, then set height and length. Drag the band to slide it, the dots to resize.'}
         {tool === 'containment' && 'Tap where the barrier goes, then enter its size.'}
         {tool === 'origin' && 'Drop the X on the source of the loss.'}
       </div>
@@ -884,7 +902,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
             <div className="absolute inset-0 bg-navy/30" onClick={() => setPendingFlood(null)} />
             <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
               <div className="font-display font-bold text-lg text-navy">Flood cut</div>
-              <p className="text-xs text-gray-400 mt-0.5">Wall is {full.toFixed(1)} ft \u00b7 {(len * fc.heightFt).toFixed(0)} sq ft removed (DRYW)</p>
+              <p className="text-xs text-gray-400 mt-0.5">Wall is {full.toFixed(1)} ft · {(len * fc.heightFt).toFixed(0)} sq ft removed (DRYW)</p>
               <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Cut height</label>
               <div className="flex gap-2 mt-1">
                 {FLOOD_HEIGHTS.map(h => (
@@ -907,7 +925,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
                   className="flex-1 border border-gray-200 rounded-xl px-3.5 py-2.5 text-[16px] font-bold focus:outline-none focus:border-sky" />
                 <span className="text-xs text-gray-400">ft</span>
               </div>
-              <p className="text-[11px] text-gray-400 mt-2">Tip: after closing, drag the two dots on the wall to slide or resize the cut.</p>
+              <p className="text-[11px] text-gray-400 mt-2">Tip: after closing, drag a dot to resize an end, or drag the band itself to slide the whole cut along the wall.</p>
               <div className="flex gap-2 mt-4">
                 <button onClick={remove} className="flex-1 border border-red-200 rounded-xl py-3 font-semibold text-red-600 active:bg-red-50">Remove</button>
                 <button onClick={() => setPendingFlood(null)} className="btn-primary flex-1 py-3 justify-center">Done</button>
@@ -928,7 +946,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
             <div className="absolute inset-0 bg-navy/30" onClick={cancel} />
             <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
               <div className="font-display font-bold text-lg text-navy">Containment barrier</div>
-              <p className="text-xs text-gray-400 mt-0.5">Poly sheeting \u00b7 {sqft} sq ft (PLASTIC)</p>
+              <p className="text-xs text-gray-400 mt-0.5">Plastic sheeting · {sqft} sq ft</p>
               <div className="flex gap-3 mt-3">
                 <div className="flex-1">
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Width (ft)</label>
