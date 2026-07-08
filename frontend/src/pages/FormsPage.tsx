@@ -58,7 +58,7 @@ export default function FormsPage() {
     if (!claimId) return;
     const { data: c } = await supabase.from('resto_claims').select('*').eq('id', claimId).single();
     setClaim(c as Claim);
-    const { data: s } = await supabase.from('resto_signatures').select('*').eq('claim_id', claimId).order('signed_at', { ascending: false });
+    const { data: s } = await supabase.from('resto_claim_signatures').select('*').eq('claim_id', claimId).order('signed_at', { ascending: false });
     setSigs((s as Sig[]) ?? []);
   }
   useEffect(() => { void load(); }, [claimId]);
@@ -74,7 +74,7 @@ export default function FormsPage() {
     setSaving(true);
     try {
       const c = clauses(openType, company, claim);
-      const { error } = await supabase.from('resto_signatures').insert({
+      const { error } = await supabase.from('resto_claim_signatures').insert({
         org_id: activeOrg.id, claim_id: claimId, doc_type: openType,
         signer_name: signer.trim(), signer_role: 'policyholder', signature_data: sigData,
         doc_snapshot: { company, property: claim.address, insured: claim.policyholder_name, carrier: claim.insurance_company, policy: claim.policy_number, claimNo: claim.assignment_identifier, adjuster: claim.adjuster, intro: c.intro, items: c.items }

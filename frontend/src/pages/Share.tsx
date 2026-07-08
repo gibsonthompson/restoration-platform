@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { UserPlus, Trash2, Mail, Link2, Copy, Share as ShareIcon, MessageSquare, ExternalLink, Check } from 'lucide-react';
+import { UserPlus, Trash2, Mail, Link2, Copy, Share as ShareIcon, ExternalLink, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { SubHeader } from '../components/SubHeader';
 
@@ -21,9 +21,7 @@ export default function Share() {
   const [token, setToken] = useState<string | null>(null);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [claimName, setClaimName] = useState('');
-  const [phone, setPhone] = useState('');
   const [toEmail, setToEmail] = useState('');
-  const [sendingSms, setSendingSms] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendMsg, setSendMsg] = useState<{ kind: 'err' | 'ok'; text: string } | null>(null);
 
@@ -62,7 +60,6 @@ export default function Share() {
     ]);
     if (claim?.org_id) setOrgId(claim.org_id);
     if (claim?.policyholder_name) setClaimName(claim.policyholder_name);
-    if (claim?.policyholder_phone) setPhone(claim.policyholder_phone);
     if (claim?.policyholder_email) setToEmail(claim.policyholder_email);
     setShares((sh as ShareRow[]) ?? []);
     if (api) {
@@ -83,22 +80,6 @@ export default function Share() {
   }
 
   // SMS goes through Telnyx (business number) and is logged server-side.
-  async function sendSms() {
-    setSendMsg(null);
-    const to = phone.trim();
-    if (!to) { setSendMsg({ kind: 'err', text: 'Enter a phone number.' }); return; }
-    if (!publicUrl) { setSendMsg({ kind: 'err', text: 'Link not ready yet.' }); return; }
-    setSendingSms(true);
-    try {
-      const { res, json } = await authFetch('/api/resto/send', { claimId, channel: 'sms', to, url: publicUrl });
-      if (!res.ok) {
-        const e = json.error || '';
-        setSendMsg({ kind: 'err', text: /sms not configured|sender not configured/.test(e) ? 'SMS is not set up on the server yet.' : ('Could not text: ' + (e || res.status)) });
-        return;
-      }
-      setSendMsg({ kind: 'ok', text: `Texted to ${to}.` });
-    } finally { setSendingSms(false); }
-  }
 
   // Email opens the user's own mail app (no server send). Logged best-effort.
   const mailHref = publicUrl
@@ -147,20 +128,14 @@ export default function Share() {
                 <button onClick={nativeShare} disabled={!publicUrl} className="btn-soft flex-1 py-2.5 text-sm disabled:opacity-50">
                   <ShareIcon size={15} /> Share
                 </button>
-                <a href={publicUrl || undefined} target="_blank" rel="noreferrer"
-                   className={`btn-soft px-3 py-2.5 text-sm ${!publicUrl ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <ExternalLink size={15} />
-                </a>
               </div>
 
+              <a href={publicUrl || undefined} target="_blank" rel="noreferrer"
+                 className={`btn-primary w-full py-2.5 text-sm justify-center ${!publicUrl ? 'opacity-50 pointer-events-none' : ''}`}>
+                <ExternalLink size={15} /> Open / download PDF report
+              </a>
+
               <div className="border-t border-gray-100 pt-3 space-y-2">
-                <div className="flex gap-2">
-                  <input className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky"
-                         placeholder="Phone number" inputMode="tel" value={phone} onChange={e => setPhone(e.target.value)} />
-                  <button onClick={sendSms} disabled={sendingSms || !publicUrl} className="btn-primary px-4 disabled:opacity-50">
-                    <MessageSquare size={15} /> {sendingSms ? '...' : 'Text'}
-                  </button>
-                </div>
                 <div className="flex gap-2">
                   <input className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky"
                          placeholder="Email address" type="email" autoCapitalize="none" value={toEmail} onChange={e => setToEmail(e.target.value)} />
@@ -177,7 +152,7 @@ export default function Share() {
                 )}
               </div>
               <p className="text-[11px] text-gray-400">
-                Anyone with this link can view the report, no login needed. Text sends from your business line; Email opens your mail app. Both are logged to the job.
+                Anyone with this link can view or download the report PDF, no login needed. Email opens your mail app. Opens and shares are logged to the job.
               </p>
             </>
           )}
@@ -194,6 +169,7 @@ export default function Share() {
                     value={role} onChange={e => setRole(e.target.value)}>
               <option value="viewer">Viewer (read only)</option>
               <option value="estimator">Estimator (read only)</option>
+              <option value="editor">Editor (can edit the job)</option>
             </select>
             <button onClick={invite} disabled={busy} className="btn-soft px-4 disabled:opacity-50">
               {busy ? 'Adding...' : 'Add'}
@@ -204,7 +180,7 @@ export default function Share() {
               {msg.text}
             </div>
           )}
-          <p className="text-[11px] text-gray-400">For a teammate, sub, or adjuster who has a Restoration Docs login. Read-only.</p>
+          <p className="text-[11px] text-gray-400">For a teammate, sub, or adjuster with a Restoration Docs login. Editors can add and change job data; viewers and estimators are read-only.</p>
         </div>
 
         {shares.length > 0 && (
@@ -218,7 +194,7 @@ export default function Share() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm truncate">{s.email ?? 'Unknown user'}</div>
-                    <div className="text-[11px] text-gray-400 font-medium capitalize">{s.role} · read only</div>
+                    <div className="text-[11px] text-gray-400 font-medium capitalize">{s.role} · {s.role === 'editor' ? 'can edit' : 'read only'}</div>
                   </div>
                   <button onClick={() => revoke(s.id)} className="text-gray-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
                 </div>
