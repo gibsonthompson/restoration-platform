@@ -52,6 +52,7 @@ export default function FormsPage() {
   const [signer, setSigner] = useState('');
   const [sigData, setSigData] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [justSigned, setJustSigned] = useState<string | null>(null);
 
   async function load() {
     if (!claimId) return;
@@ -68,17 +69,24 @@ export default function FormsPage() {
   function open(type: string) { setOpenType(type); setSigner(claim?.policyholder_name || ''); setSigData(null); }
 
   async function sign() {
-    if (!openType || !activeOrg || !claimId || !claim || !sigData || !signer.trim()) return;
+    if (!openType || !claimId || !claim || !sigData || !signer.trim()) return;
+    if (!activeOrg) { alert('No active organization is selected. Reopen the claim and try again.'); return; }
     setSaving(true);
     try {
       const c = clauses(openType, company, claim);
-      await supabase.from('resto_signatures').insert({
+      const { error } = await supabase.from('resto_signatures').insert({
         org_id: activeOrg.id, claim_id: claimId, doc_type: openType,
         signer_name: signer.trim(), signer_role: 'policyholder', signature_data: sigData,
         doc_snapshot: { company, property: claim.address, insured: claim.policyholder_name, carrier: claim.insurance_company, policy: claim.policy_number, claimNo: claim.assignment_identifier, adjuster: claim.adjuster, intro: c.intro, items: c.items }
       });
+      if (error) { alert('Could not save the signature: ' + error.message); return; }   // keep modal open so nothing is lost
+      const signedType = openType;
       setOpenType(null);
       await load();
+      setJustSigned(signedType);
+      setTimeout(() => setJustSigned(null), 3500);
+    } catch (e: any) {
+      alert('Could not save the signature: ' + (e?.message ?? 'unknown error'));
     } finally { setSaving(false); }
   }
 
@@ -94,6 +102,12 @@ export default function FormsPage() {
       </div>
 
       <div className="px-4 mt-4 space-y-3">
+        {justSigned && (
+          <div className="bg-green-50 rounded-2xl p-3.5 flex items-center gap-2.5">
+            <CheckCircle2 className="text-green-600" size={20} />
+            <span className="text-sm font-semibold text-green-700">Signed and saved.</span>
+          </div>
+        )}
         {DOCS.map(d => {
           const s = latest(d.type);
           return (
