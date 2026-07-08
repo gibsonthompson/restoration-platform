@@ -30,6 +30,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   async function load() {
     if (!user) { setOrgs([]); setActive(null); setLoading(false); return; }
     setLoading(true);
+    try { await supabase.rpc('resto_accept_my_invites'); } catch { /* first login may have none */ }
     const { data: members } = await supabase
       .from('resto_org_members')
       .select('role, org_id, resto_orgs(id, name, plan, status)')

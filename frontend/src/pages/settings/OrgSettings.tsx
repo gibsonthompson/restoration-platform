@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, Upload, Trash2, Check } from 'lucide-react';
+import { LogOut, Upload, Trash2, Check , Users, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { useAuth } from '../../context/AuthContext';
@@ -44,6 +45,7 @@ const EMPTY: Branding = {
 };
 
 export default function OrgSettings() {
+  const nav = useNavigate();
   const { activeOrg, role } = useOrg();
   const { user } = useAuth();
   const [f, setF] = useState<Branding>(EMPTY);
@@ -175,6 +177,13 @@ export default function OrgSettings() {
       <button onClick={save} disabled={saving}
         className="btn-primary w-full py-3 justify-center disabled:opacity-50">
         {saved ? (<><Check size={16} /> Saved</>) : saving ? 'Saving...' : 'Save branding'}
+      </button>
+
+      {/* team */}
+      <button onClick={() => nav('/settings/team')} className="card w-full flex items-center gap-3 text-left active:scale-[.99] transition">
+        <div className="w-9 h-9 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center shrink-0"><Users size={17} /></div>
+        <div className="flex-1"><div className="font-bold text-sm text-navy">Team members</div><div className="text-[11px] text-gray-400">Add crew who can work on every job</div></div>
+        <ChevronRight size={16} className="text-gray-300" />
       </button>
 
       {/* account */}

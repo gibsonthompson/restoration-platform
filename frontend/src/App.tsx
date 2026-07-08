@@ -17,6 +17,7 @@ import FormsPage from './pages/FormsPage';
 import Search from './pages/Search';
 import Notifications from './pages/Notifications';
 import OrgSettings from './pages/settings/OrgSettings';
+import TeamMembers from './pages/settings/TeamMembers';
 import HydroPage from './features/hydro/HydroPage';
 
 // Routes are nested to mirror the real IA: claim -> structure -> room. The claim
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/search" element={<Search />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<OrgSettings />} />
+        <Route path="/settings/team" element={<TeamMembers />} />
 
         {/* Claim + children */}
         <Route path="/claims/new" element={<EditClaim />} />
