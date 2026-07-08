@@ -61,30 +61,26 @@ export default function Documents() {
     <div>
       <SubHeader title="Documents" />
       <div className="p-4 space-y-3">
-        <div className="flex gap-2 text-xs">
-          {['Missing Information', 'Needs Signature', 'Signed'].map(s => (
-            <span key={s} className="border rounded-full px-3 py-1 text-gray-500">{s}</span>
-          ))}
-        </div>
+        <button onClick={generate} disabled={busy} className="btn-primary w-full py-3.5 disabled:opacity-60">
+          <FilePlus size={17} /> {busy ? 'Generating report…' : 'Generate Full Report'}
+        </button>
 
-        {docs.length === 0 && <p className="text-gray-400 text-sm">No documents yet. Generate a report below.</p>}
+        {docs.length === 0 && (
+          <p className="text-gray-400 text-sm px-1 pt-1">No reports yet. Tap Generate Full Report to build a carrier-ready PDF from this claim.</p>
+        )}
+
         {docs.map(d => (
-          <div key={d.id} className="bg-white border rounded p-3 flex items-center gap-3">
-            <FileText size={18} className="text-brand shrink-0" />
+          <div key={d.id} className="card flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center shrink-0"><FileText size={18} /></div>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{d.title ?? d.type}</div>
-              <div className="text-xs text-gray-400">{d.status} · {new Date(d.created_at).toLocaleDateString()}</div>
+              <div className="text-sm font-bold truncate">{d.title ?? 'Full Report'}</div>
+              <div className="text-xs text-gray-400 capitalize">{d.status} · {new Date(d.created_at).toLocaleDateString()}</div>
             </div>
             {d.storage_path && (
-              <button onClick={() => download(d)} className="text-brand p-1"><Download size={18} /></button>
+              <button onClick={() => download(d)} className="btn-soft px-3 py-2 text-sm"><Download size={16} /> PDF</button>
             )}
           </div>
         ))}
-
-        <button onClick={generate} disabled={busy}
-                className="w-full bg-brand text-white rounded py-3 text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50">
-          <FilePlus size={16} /> {busy ? 'Generating report...' : 'Generate Full Report'}
-        </button>
       </div>
     </div>
   );
