@@ -106,7 +106,7 @@ export default function ScopePage() {
             )}
 
             <p className="text-[11px] text-gray-400 px-1">
-              Generated {new Date(scope.created_at).toLocaleString()}{scope.model ? ` · ${scope.model}` : ''}
+              Generated {new Date(scope.created_at).toLocaleString()}
             </p>
           </>
         )}

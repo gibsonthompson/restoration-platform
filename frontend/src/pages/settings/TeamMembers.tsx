@@ -9,7 +9,6 @@ interface Invite { id: string; email: string; role: string; created_at: string }
 
 const ROLES = [
   { value: 'manager', label: 'Manager' },
-  { value: 'lead_tech', label: 'Lead tech' },
   { value: 'tech', label: 'Tech' }
 ];
 const roleLabel = (r: string) => ({ owner: 'Owner', manager: 'Manager', lead_tech: 'Lead tech', tech: 'Tech' } as Record<string, string>)[r] || r;
