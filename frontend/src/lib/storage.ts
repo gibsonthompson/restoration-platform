@@ -23,3 +23,21 @@ export async function signedUrl(path: string, expiresIn = 3600): Promise<string 
   const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresIn);
   return data?.signedUrl ?? null;
 }
+
+// Best-effort device GPS for stamping field photos. Resolves null on denial,
+// timeout, or lack of support — never blocks or throws, so uploads still work.
+export async function getPosition(): Promise<{ lat: number; lng: number } | null> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return null;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: { lat: number; lng: number } | null) => { if (!done) { done = true; resolve(v); } };
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (p) => finish({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => finish(null),
+        { timeout: 5000, maximumAge: 60000, enableHighAccuracy: true }
+      );
+    } catch { finish(null); }
+    setTimeout(() => finish(null), 5500);
+  });
+}

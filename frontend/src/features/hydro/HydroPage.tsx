@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera } from 'lucide-react';
+import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera, Fan, Package } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { SubHeader } from '../../components/SubHeader';
@@ -17,6 +17,21 @@ interface Reading {
   dew_point: number | null; material_mc: number | null; material: string | null; captured_at: string;
 }
 interface DryStd { id: string; material: string; goal_value: number | null; }
+interface Equip { id: string; type: string; make_model: string | null; serial: string | null; placed_at: string | null; removed_at: string | null; actual_placed: number | null; }
+const EQUIP_TYPES = [
+  { value: 'air_mover', label: 'Air mover' },
+  { value: 'dehumidifier', label: 'Dehumidifier' },
+  { value: 'air_scrubber', label: 'Air scrubber' },
+  { value: 'heater', label: 'Heater' }
+];
+const equipLabel = (t: string) => (EQUIP_TYPES.find(e => e.value === t)?.label || t);
+const todayISO = () => new Date().toISOString().slice(0, 10);
+function equipDays(e: Equip): number {
+  if (!e.placed_at) return 0;
+  const start = new Date(e.placed_at + 'T00:00:00').getTime();
+  const end = (e.removed_at ? new Date(e.removed_at + 'T00:00:00') : new Date()).getTime();
+  return Math.max(1, Math.round((end - start) / 86400000) + (e.removed_at ? 1 : 0));
+}
 
 const READING_TYPES = [
   { v: 'psychrometric', l: 'Affected (interior)' },
@@ -121,6 +136,8 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
   const [stds, setStds] = useState<DryStd[]>([]);
   const [form, setForm] = useState({ reading_type: 'psychrometric', location_label: '', temp_f: '', rh_pct: '', mc_value: '', material: '' });
   const [stdDraft, setStdDraft] = useState<{ material: string; goal: string } | null>(null);
+  const [equipment, setEquipment] = useState<Equip[]>([]);
+  const [eqDraft, setEqDraft] = useState<{ type: string; count: string; make_model: string; placed_at: string; removed_at: string } | null>(null);
   const [ocr, setOcr] = useState(false);
   const meterRef = useRef<HTMLInputElement>(null);
 
@@ -152,12 +169,14 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
   }
 
   async function loadAll() {
-    const [{ data: r }, { data: s }] = await Promise.all([
+    const [{ data: r }, { data: s }, { data: eq }] = await Promise.all([
       supabase.from('resto_readings').select('*').eq('chamber_id', c.id).order('captured_at', { ascending: false }),
-      supabase.from('resto_dry_standards').select('*').eq('chamber_id', c.id).order('captured_at')
+      supabase.from('resto_dry_standards').select('*').eq('chamber_id', c.id).order('captured_at'),
+      supabase.from('resto_equipment').select('*').eq('chamber_id', c.id).order('placed_at')
     ]);
     setReadings((r as Reading[]) ?? []);
     setStds((s as DryStd[]) ?? []);
+    setEquipment((eq as Equip[]) ?? []);
   }
   useEffect(() => { void loadAll(); }, [c.id]);
 
@@ -193,6 +212,26 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
     await loadAll();
   }
 
+  async function saveEquip() {
+    if (!eqDraft) return;
+    await supabase.from('resto_equipment').insert({
+      org_id: orgId, chamber_id: c.id, type: eqDraft.type,
+      make_model: eqDraft.make_model.trim() || null,
+      actual_placed: parseInt(eqDraft.count) || 1,
+      placed_at: eqDraft.placed_at || null,
+      removed_at: eqDraft.removed_at || null
+    });
+    setEqDraft(null);
+    await loadAll();
+  }
+  async function markRemoved(id: string) {
+    await supabase.from('resto_equipment').update({ removed_at: todayISO() }).eq('id', id);
+    await loadAll();
+  }
+  async function deleteEquip(id: string) {
+    await supabase.from('resto_equipment').delete().eq('id', id);
+    await loadAll();
+  }
   async function saveStd() {
     if (!stdDraft || !stdDraft.material.trim()) { setStdDraft(null); return; }
     await supabase.from('resto_dry_standards').insert({
@@ -274,6 +313,35 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
           ) : <p className="text-xs text-gray-400">Enter dimensions for a recommendation.</p>}
         </div>
 
+        {/* Equipment on site — the billable equipment-days record */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-bold flex items-center gap-1"><Fan size={15} className="text-brand" /> Equipment on site</div>
+            <button onClick={() => setEqDraft({ type: 'air_mover', count: '1', make_model: '', placed_at: todayISO(), removed_at: '' })} className="text-brand text-sm font-medium">+ Add</button>
+          </div>
+          {equipment.length === 0 && <p className="text-xs text-gray-400">Log air movers, dehus, and scrubbers with dates to justify equipment days on the invoice.</p>}
+          {equipment.map(e => {
+            const days = equipDays(e);
+            return (
+              <div key={e.id} className="flex items-center gap-2 py-2 border-t first:border-0 text-sm">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold">{e.actual_placed ?? 1} × {equipLabel(e.type)}{e.make_model ? ` · ${e.make_model}` : ''}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {e.placed_at ? new Date(e.placed_at + 'T00:00:00').toLocaleDateString() : '—'} → {e.removed_at ? new Date(e.removed_at + 'T00:00:00').toLocaleDateString() : 'running'} · {days} day{days === 1 ? '' : 's'} · {(e.actual_placed ?? 1) * days} unit-days
+                  </div>
+                </div>
+                {!e.removed_at && <button onClick={() => markRemoved(e.id)} className="text-[11px] font-semibold text-sky px-2 py-1 bg-sky-soft rounded-lg shrink-0">Mark removed</button>}
+                <button onClick={() => deleteEquip(e.id)} className="text-gray-300 hover:text-red-500 shrink-0"><Trash2 size={15} /></button>
+              </div>
+            );
+          })}
+          {equipment.length > 0 && (() => {
+            const totals: Record<string, number> = {};
+            equipment.forEach(e => { totals[e.type] = (totals[e.type] || 0) + (e.actual_placed ?? 1) * equipDays(e); });
+            return <div className="mt-2 pt-2 border-t text-[11px] text-gray-600 font-bold">{Object.entries(totals).map(([t, ud]) => `${ud} ${equipLabel(t).toLowerCase()}-days`).join('  ·  ')}</div>;
+          })()}
+        </div>
+
         {/* Dry standards */}
         <div className="card">
           <div className="flex items-center justify-between mb-2">
@@ -351,6 +419,33 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
           ))}
         </div>
       </div>
+      {eqDraft && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-navy/30" onClick={() => setEqDraft(null)} />
+          <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+            <div className="font-display font-bold text-lg text-navy">Add equipment</div>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Type</label>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {EQUIP_TYPES.map(t => (
+                <button key={t.value} onClick={() => setEqDraft({ ...eqDraft, type: t.value })} className={`px-3 py-1.5 rounded-full text-[13px] font-semibold ${eqDraft.type === t.value ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{t.label}</button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <div><label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Count</label><input type="number" inputMode="numeric" value={eqDraft.count} onChange={e => setEqDraft({ ...eqDraft, count: e.target.value })} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky" /></div>
+              <div><label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Make / model</label><input value={eqDraft.make_model} onChange={e => setEqDraft({ ...eqDraft, make_model: e.target.value })} placeholder="optional" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[16px] outline-none focus:border-sky" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <div><label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Placed</label><input type="date" value={eqDraft.placed_at} onChange={e => setEqDraft({ ...eqDraft, placed_at: e.target.value })} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[15px] outline-none focus:border-sky" /></div>
+              <div><label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Removed</label><input type="date" value={eqDraft.removed_at} onChange={e => setEqDraft({ ...eqDraft, removed_at: e.target.value })} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 mt-1 text-[15px] outline-none focus:border-sky" /></div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setEqDraft(null)} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+              <button onClick={saveEquip} className="flex-1 btn-primary py-3 justify-center">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {stdDraft && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-navy/30" onClick={() => setStdDraft(null)} />

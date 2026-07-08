@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Camera, Trash2, Package, Box } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { uploadMedia, signedUrl } from '../../lib/storage';
+import { uploadMedia, signedUrl, getPosition } from '../../lib/storage';
 import type { ContentsItem, Disposition } from '../../types/models';
 
 // Contents module: per-room personal-property inventory. Captures what carriers
@@ -75,9 +75,11 @@ export function ContentsTab({ roomId, claimId, orgId }:
     try {
       let mediaId = editing.media_id ?? null;
       if (draftPhotoPath) {
+        const pos = await getPosition();
         const { data: m } = await supabase.from('resto_media').insert({
           org_id: orgId, claim_id: claimId, room_id: roomId,
-          type: 'photo', storage_path: draftPhotoPath, captured_at: new Date().toISOString()
+          type: 'photo', storage_path: draftPhotoPath, captured_at: new Date().toISOString(),
+          lat: pos?.lat ?? null, lng: pos?.lng ?? null
         }).select('id').single();
         mediaId = (m as { id: string } | null)?.id ?? null;
       }
