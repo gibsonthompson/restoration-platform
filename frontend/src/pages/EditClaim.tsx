@@ -30,6 +30,13 @@ export default function EditClaim() {
   const { claimId } = useParams();
   const { activeOrg } = useOrg();
   const nav = useNavigate();
+  async function deleteClaim() {
+    if (!claimId) return;
+    if (!confirm('Delete this entire claim? All its structures, rooms, photos, readings, contents, and reports will be permanently removed. This cannot be undone.')) return;
+    const { error } = await supabase.from('resto_claims').delete().eq('id', claimId);
+    if (error) { alert('Could not delete claim: ' + error.message); return; }
+    nav('/');
+  }
   const [f, setF] = useState<Partial<Claim>>(() => ({ ...empty, date_of_loss: todayLocal() }));
   const [saving, setSaving] = useState(false);
   const editing = Boolean(claimId);
@@ -48,6 +55,7 @@ export default function EditClaim() {
   async function save() {
     if (!activeOrg || saving) return;
     setSaving(true);
+    // Strip read-only/joined fields so update/insert payloads stay clean.
     const { created_at, ...rest } = f as any;
     const row = { ...rest, org_id: activeOrg.id };
     try {
@@ -125,6 +133,11 @@ export default function EditClaim() {
         <button onClick={save} disabled={saving} className="btn-primary w-full py-3.5 mt-2 disabled:opacity-50">
           {saving ? 'Saving...' : 'Save claim'}
         </button>
+        {claimId && (
+          <button onClick={deleteClaim} className="w-full py-3 mt-1 text-sm font-semibold text-red-600 border border-red-200 rounded-xl active:bg-red-50">
+            Delete claim
+          </button>
+        )}
       </div>
     </div>
   );
