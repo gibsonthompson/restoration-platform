@@ -13,8 +13,8 @@ interface Doc {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  preliminary_report: 'Preliminary Report', drying_report: 'Drying Report', drying_log: 'Daily Drying Log',
-  schedule_of_loss: 'Schedule of Loss', full_export: 'Full Report', upload: 'Upload', esx: 'Xactimate ESX'
+  preliminary_report: 'Preliminary Report', drying_report: 'Drying Report', drying_log: 'Daily Drying Log', esx: 'Xactimate Export',
+  schedule_of_loss: 'Schedule of Loss', full_export: 'Full Report', upload: 'Upload'
 };
 const docName = (d: Doc) => d.title || TYPE_LABEL[d.type] || 'Report';
 
@@ -23,6 +23,7 @@ export default function Documents() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [busy, setBusy] = useState(false);
   const [busyLog, setBusyLog] = useState(false);
+  const [busyEsx, setBusyEsx] = useState(false);
   const [preview, setPreview] = useState<{ doc: Doc; url: string | null; downloadUrl: string | null; loading: boolean; error: string | null } | null>(null);
 
   async function load() {
@@ -70,6 +71,31 @@ export default function Documents() {
     } finally { setBusyLog(false); }
   }
 
+  async function generateEsx() {
+    if (!claimId) return;
+    if (!API) { alert('Export service not configured. Set VITE_API_URL in Vercel.'); return; }
+    setBusyEsx(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${API}/api/resto/esx`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ claimId })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || res.statusText); }
+      await load();
+    } catch (err: any) {
+      alert('Export failed: ' + (err?.message ?? 'unknown'));
+    } finally { setBusyEsx(false); }
+  }
+
+  // .esx is a Xactimate ZIP, not a PDF — download it directly rather than previewing.
+  async function downloadEsx(d: Doc) {
+    if (!d.storage_path) return;
+    const { data } = await supabase.storage.from('resto-media').createSignedUrl(d.storage_path, 3600, { download: `${docName(d).replace(/[^\w.-]+/g, '_')}.esx` });
+    if (data?.signedUrl) window.location.href = data.signedUrl;
+  }
+
   // Open a details + preview sheet. The signed URL is fetched here (once), so the
   // "Open PDF" control in the sheet can be a plain anchor — no window.open after an
   // await, which is what the mobile popup blocker was killing.
@@ -83,6 +109,7 @@ export default function Documents() {
   }
 
   async function openDoc(d: Doc) {
+    if (d.type === 'esx') { void downloadEsx(d); return; }
     setPreview({ doc: d, url: null, downloadUrl: null, loading: true, error: null });
     if (!d.storage_path) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: 'No file is stored for this report yet.' }); return; }
     // Serve through our own domain (Vercel /api proxy -> backend) so the Supabase host
@@ -106,6 +133,9 @@ export default function Documents() {
         </button>
         <button onClick={generateDryingLog} disabled={busyLog} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
           <FileText size={16} /> {busyLog ? 'Generating drying log…' : 'Generate Daily Drying Log'}
+        </button>
+        <button onClick={generateEsx} disabled={busyEsx} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
+          <FileText size={16} /> {busyEsx ? 'Building export…' : 'Export to Xactimate (.esx) · beta'}
         </button>
 
         {docs.length === 0 && (
