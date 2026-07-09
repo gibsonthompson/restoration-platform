@@ -8,10 +8,9 @@ export function NoteSheet({ initial, title = 'Note', placeholder = 'Type your no
   const [body, setBody] = useState(initial ?? '');
   useEffect(() => { setBody(initial ?? ''); }, [initial]);
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-navy/30" onClick={onClose} />
-      <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4"
-           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-5">
+      <div className="absolute inset-0 bg-navy/40 backdrop-blur-[1px]" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl p-5">
         <div className="font-display font-bold text-lg text-navy">{title}</div>
         <textarea autoFocus value={body} onChange={e => setBody(e.target.value)} placeholder={placeholder} rows={5}
           className="w-full border border-gray-200 rounded-2xl px-3.5 py-3 mt-3 text-[16px] leading-relaxed outline-none focus:border-sky resize-none" />

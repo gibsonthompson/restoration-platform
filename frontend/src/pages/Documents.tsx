@@ -22,7 +22,7 @@ export default function Documents() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [busy, setBusy] = useState(false);
   const [busyLog, setBusyLog] = useState(false);
-  const [preview, setPreview] = useState<{ doc: Doc; url: string | null; loading: boolean; error: string | null } | null>(null);
+  const [preview, setPreview] = useState<{ doc: Doc; url: string | null; downloadUrl: string | null; loading: boolean; error: string | null } | null>(null);
 
   async function load() {
     if (!claimId) return;
@@ -73,11 +73,18 @@ export default function Documents() {
   // "Open PDF" control in the sheet can be a plain anchor — no window.open after an
   // await, which is what the mobile popup blocker was killing.
   async function openDoc(d: Doc) {
-    setPreview({ doc: d, url: null, loading: true, error: null });
-    if (!d.storage_path) { setPreview({ doc: d, url: null, loading: false, error: 'No file is stored for this report yet.' }); return; }
-    const { data, error } = await supabase.storage.from('resto-media').createSignedUrl(d.storage_path, 3600);
-    if (error || !data?.signedUrl) { setPreview({ doc: d, url: null, loading: false, error: error?.message || 'Could not load the file. It may still be generating.' }); return; }
-    setPreview({ doc: d, url: data.signedUrl, loading: false, error: null });
+    setPreview({ doc: d, url: null, downloadUrl: null, loading: true, error: null });
+    if (!d.storage_path) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: 'No file is stored for this report yet.' }); return; }
+    const fname = `${docName(d).replace(/\s+/g, '_')}.pdf`;
+    // Two signed URLs: a plain one for inline preview/open, and one with Supabase's
+    // download option (sets Content-Disposition: attachment) so "Download" actually
+    // saves the file with a real name on mobile — a cross-origin `download` attr is ignored.
+    const [{ data: v, error: ve }, { data: dl }] = await Promise.all([
+      supabase.storage.from('resto-media').createSignedUrl(d.storage_path, 3600),
+      supabase.storage.from('resto-media').createSignedUrl(d.storage_path, 3600, { download: fname })
+    ]);
+    if (ve || !v?.signedUrl) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: ve?.message || 'Could not load the file. It may still be generating.' }); return; }
+    setPreview({ doc: d, url: v.signedUrl, downloadUrl: dl?.signedUrl ?? v.signedUrl, loading: false, error: null });
   }
 
   return (
@@ -133,7 +140,7 @@ export default function Documents() {
               <a href={preview.url} target="_blank" rel="noreferrer" className="btn-soft flex-1 py-3 justify-center text-sm">
                 <ExternalLink size={16} /> Open in new tab
               </a>
-              <a href={preview.url} download={`${docName(preview.doc).replace(/\s+/g, '_')}.pdf`} className="btn-primary flex-1 py-3 justify-center text-sm">
+              <a href={preview.downloadUrl || preview.url} className="btn-primary flex-1 py-3 justify-center text-sm">
                 <Download size={16} /> Download PDF
               </a>
             </div>
