@@ -13,7 +13,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const inClaim = /^\/claims\/(new|[0-9a-fA-F-]{36})/.test(pathname);
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-[#EDF1F6] w-full max-w-[480px] mx-auto shadow-[0_0_60px_rgba(14,42,77,0.10)]">
+    <div className="h-screen overflow-hidden flex flex-col bg-[#EDF1F6] w-full max-w-[480px] mx-auto shadow-[0_0_60px_rgba(14,42,77,0.10)]"
+         style={{ height: '100dvh' }}>
       {!inClaim && (
         <header className="safe-top bg-gradient-to-br from-navy-soft to-navy text-white px-5 pb-4 flex items-center justify-between shrink-0">
           <span className="font-display font-extrabold text-[18px]">Restoration Docs</span>
