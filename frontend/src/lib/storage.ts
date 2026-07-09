@@ -41,3 +41,13 @@ export async function getPosition(): Promise<{ lat: number; lng: number } | null
     setTimeout(() => finish(null), 5500);
   });
 }
+
+// GPS capture that respects the org's stamp_gps setting (default on). Returns
+// null without prompting for location if the company disabled GPS stamping.
+export async function getPositionIfEnabled(orgId: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const { data } = await supabase.from('resto_org_settings').select('stamp_gps').eq('org_id', orgId).maybeSingle();
+    if ((data as { stamp_gps?: boolean } | null)?.stamp_gps === false) return null;
+  } catch { /* default to enabled if the setting can't be read */ }
+  return getPosition();
+}

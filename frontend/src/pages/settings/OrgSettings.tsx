@@ -52,6 +52,7 @@ export default function OrgSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [stampGps, setStampGps] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = <K extends keyof Branding>(k: K, v: Branding[K]) => { setF(p => ({ ...p, [k]: v })); setSaved(false); };
 
@@ -70,6 +71,7 @@ export default function OrgSettings() {
           phone: b.phone ?? '', email: b.email ?? '', website: b.website ?? '',
           license_number: b.license_number ?? '', report_footer: b.report_footer ?? ''
         });
+        setStampGps((row as any)?.stamp_gps !== false);
         setLoading(false);
       });
   }, [activeOrg?.id]);
@@ -84,7 +86,7 @@ export default function OrgSettings() {
     if (!activeOrg) return;
     setSaving(true); setSaved(false);
     const { error } = await supabase.from('resto_org_settings')
-      .upsert({ org_id: activeOrg.id, report_branding: f, updated_at: new Date().toISOString() }, { onConflict: 'org_id' });
+      .upsert({ org_id: activeOrg.id, report_branding: f, stamp_gps: stampGps, updated_at: new Date().toISOString() }, { onConflict: 'org_id' });
     setSaving(false);
     if (error) alert('Save failed: ' + error.message);
     else { setSaved(true); setTimeout(() => setSaved(false), 2500); }
@@ -172,6 +174,17 @@ export default function OrgSettings() {
         <Field label="Email" k="email" placeholder="help@company.com" type="email" />
         <Field label="Website" k="website" placeholder="company.com" />
         <Field label="Footer line" k="report_footer" placeholder="24/7 emergency water, fire & mold restoration." />
+      </div>
+
+      <div className="card flex items-center gap-3">
+        <div className="flex-1">
+          <div className="font-bold text-sm text-navy">Stamp photos with GPS</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">Tag new photos with device location and print it on the report as proof of where each photo was taken.</div>
+        </div>
+        <button onClick={() => { setStampGps(v => !v); setSaved(false); }} role="switch" aria-checked={stampGps}
+          className={`w-12 h-7 rounded-full shrink-0 transition relative ${stampGps ? 'bg-sky' : 'bg-gray-300'}`}>
+          <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${stampGps ? 'left-6' : 'left-1'}`} />
+        </button>
       </div>
 
       <button onClick={save} disabled={saving}

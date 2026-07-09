@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Camera, Trash2, Package, Box } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { uploadMedia, signedUrl, getPosition } from '../../lib/storage';
+import { uploadMedia, signedUrl, getPositionIfEnabled } from '../../lib/storage';
 import type { ContentsItem, Disposition } from '../../types/models';
 
 // Contents module: per-room personal-property inventory. Captures what carriers
@@ -28,6 +28,9 @@ export function ContentsTab({ roomId, claimId, orgId }:
   const fileRef = useRef<HTMLInputElement>(null);
   const [draftPhotoPath, setDraftPhotoPath] = useState<string | null>(null);
   const [draftPhotoUrl, setDraftPhotoUrl] = useState<string | null>(null);
+  const [customCats, setCustomCats] = useState<string[]>([]);
+  const [addingCat, setAddingCat] = useState(false);
+  const [catInput, setCatInput] = useState('');
 
   async function load() {
     const { data } = await supabase.from('resto_contents_items').select('*')
@@ -50,7 +53,25 @@ export function ContentsTab({ roomId, claimId, orgId }:
       setUrls({});
     }
   }
+  async function loadCats() {
+    const { data } = await supabase.from('resto_org_settings').select('content_categories').eq('org_id', orgId).maybeSingle();
+    setCustomCats(((data as { content_categories?: string[] } | null)?.content_categories) ?? []);
+  }
   useEffect(() => { void load(); }, [roomId]);
+  useEffect(() => { void loadCats(); }, [orgId]);
+
+  async function addCategory() {
+    const name = catInput.trim();
+    if (!name) { setAddingCat(false); return; }
+    const existing = [...CATEGORIES, ...customCats].map(c => c.toLowerCase());
+    if (!existing.includes(name.toLowerCase())) {
+      const next = [...customCats, name];
+      await supabase.from('resto_org_settings').upsert({ org_id: orgId, content_categories: next }, { onConflict: 'org_id' });
+      setCustomCats(next);
+    }
+    setEditing(p => ({ ...(p ?? {}), category: name }));
+    setCatInput(''); setAddingCat(false);
+  }
 
   function openNew() { setEditing({ ...blank }); setDraftPhotoPath(null); setDraftPhotoUrl(null); }
   function openEdit(it: ContentsItem) { setEditing({ ...it }); setDraftPhotoPath(null); setDraftPhotoUrl(urls[it.id] ?? null); }
@@ -75,7 +96,7 @@ export function ContentsTab({ roomId, claimId, orgId }:
     try {
       let mediaId = editing.media_id ?? null;
       if (draftPhotoPath) {
-        const pos = await getPosition();
+        const pos = await getPositionIfEnabled(orgId);
         const { data: m } = await supabase.from('resto_media').insert({
           org_id: orgId, claim_id: claimId, room_id: roomId,
           type: 'photo', storage_path: draftPhotoPath, captured_at: new Date().toISOString(),
@@ -145,11 +166,21 @@ export function ContentsTab({ roomId, claimId, orgId }:
 
         <div>
           <span className="text-xs font-medium text-gray-500">Category</span>
-          <div className="flex flex-wrap gap-1.5 mt-1">
-            {CATEGORIES.map(c => (
+          <div className="flex flex-wrap gap-1.5 mt-1 items-center">
+            {[...CATEGORIES, ...customCats].map(c => (
               <button key={c} onClick={() => set('category')(editing.category === c ? null : c)}
                 className={`px-2.5 py-1.5 rounded-full text-[12px] font-semibold ${editing.category === c ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{c}</button>
             ))}
+            {addingCat ? (
+              <span className="flex items-center gap-1">
+                <input autoFocus value={catInput} onChange={e => setCatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') void addCategory(); }}
+                  placeholder="New category" className="w-32 border border-sky rounded-full px-2.5 py-1.5 text-[12px] outline-none" />
+                <button onClick={() => void addCategory()} className="px-2.5 py-1.5 rounded-full text-[12px] font-bold bg-sky text-white">Add</button>
+              </span>
+            ) : (
+              <button onClick={() => setAddingCat(true)} className="px-2.5 py-1.5 rounded-full text-[12px] font-semibold border border-dashed border-gray-300 text-gray-500">+ Add</button>
+            )}
           </div>
         </div>
 

@@ -4,7 +4,7 @@ import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyN
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SubHeader } from '../components/SubHeader';
-import { uploadMedia, signedUrl, getPosition } from '../lib/storage';
+import { uploadMedia, signedUrl, getPositionIfEnabled } from '../lib/storage';
 import { ContentsTab } from '../features/contents/ContentsTab';
 import { SketchesTab } from '../features/sketch/SketchesTab';
 import type { Note, Room } from '../types/models';
@@ -88,7 +88,7 @@ export default function RoomDetail() {
     if (!files.length || !activeOrg || !claimId || !roomId) return;
     setUploading(true);
     try {
-      const pos = await getPosition();
+      const pos = await getPositionIfEnabled(activeOrg.id);
       for (const file of files) {
         const path = await uploadMedia(file, { orgId: activeOrg.id, claimId, roomId });
         await supabase.from('resto_media').insert({

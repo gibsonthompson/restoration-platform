@@ -101,9 +101,9 @@ export default function HydroPage() {
 function ChamberNameSheet({ value, onChange, onSave, onClose }:
   { value: string; onChange: (v: string) => void; onSave: () => void; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-navy/30" onClick={onClose} />
-      <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-5">
+      <div className="absolute inset-0 bg-navy/40 backdrop-blur-[1px]" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl p-5">
         <div className="font-display font-bold text-lg text-navy">New drying chamber</div>
         <p className="text-xs text-gray-400 mt-0.5">Group the rooms that dry together (e.g. Basement, Main Level).</p>
         <input autoFocus placeholder="Chamber name" value={value} onChange={e => onChange(e.target.value)}
