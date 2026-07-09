@@ -85,16 +85,16 @@ export default function Documents() {
   async function openDoc(d: Doc) {
     setPreview({ doc: d, url: null, downloadUrl: null, loading: true, error: null });
     if (!d.storage_path) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: 'No file is stored for this report yet.' }); return; }
-    const fname = `${docName(d).replace(/[^\w.-]+/g, '_').replace(/_+/g, '_')}.pdf`;
-    // Two signed URLs: a plain one for inline preview/open, and one with Supabase's
-    // download option (sets Content-Disposition: attachment) so "Download" actually
-    // saves the file with a real name on mobile — a cross-origin `download` attr is ignored.
-    const [{ data: v, error: ve }, { data: dl }] = await Promise.all([
-      supabase.storage.from('resto-media').createSignedUrl(d.storage_path, 3600),
-      supabase.storage.from('resto-media').createSignedUrl(d.storage_path, 3600, { download: fname })
-    ]);
-    if (ve || !v?.signedUrl) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: ve?.message || 'Could not load the file. It may still be generating.' }); return; }
-    setPreview({ doc: d, url: v.signedUrl, downloadUrl: dl?.signedUrl ?? v.signedUrl, loading: false, error: null });
+    // Serve through our own domain (Vercel /api proxy -> backend) so the Supabase host
+    // and its random object name are never exposed. Clean filename in the path means a
+    // clean name when saved or shared onward. Auth rides in ?t= (the PDF viewer/anchors
+    // can't send an Authorization header).
+    const { data: { session } } = await supabase.auth.getSession();
+    const t = session?.access_token;
+    if (!t) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: 'Please sign in again.' }); return; }
+    const clean = docName(d).replace(/[^\w.-]+/g, '_').replace(/_+/g, '_');
+    const base = `${window.location.origin}/api/resto/document/${d.id}/${clean}.pdf?t=${encodeURIComponent(t)}`;
+    setPreview({ doc: d, url: base, downloadUrl: `${base}&download=1`, loading: false, error: null });
   }
 
   return (
