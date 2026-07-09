@@ -4,6 +4,7 @@ import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, Chevro
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { signedUrl } from '../lib/storage';
+import { ClaimReadiness } from '../components/ClaimReadiness';
 import { NameSheet } from '../components/NameSheet';
 import type { Claim, Structure } from '../types/models';
 
@@ -97,6 +98,8 @@ export default function ClaimDetail() {
       </div>
 
       <div className="p-4 space-y-3">
+        <ClaimReadiness claimId={claim.id} />
+
         {photoCount > 0 && (
           <button onClick={() => nav(`/claims/${claim.id}/photos`)} className="card w-full text-left active:scale-[.99] transition">
             <div className="flex items-center justify-between mb-2">
