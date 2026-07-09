@@ -9,7 +9,7 @@ export function ProtectedRoute() {
   const { activeOrg, loading: orgLoading } = useOrg();
 
   if (loading || orgLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
-  if (!session) return <Navigate to="/login" replace />;
+  if (!session) return <Navigate to="/welcome" replace />;
   if (!activeOrg) return <CreateOrg />;
 
   return <AppLayout><Outlet /></AppLayout>;

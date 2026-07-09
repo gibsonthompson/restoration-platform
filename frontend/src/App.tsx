@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import Landing from './pages/Landing';
 import ClaimsList from './pages/ClaimsList';
 import ClaimDetail from './pages/ClaimDetail';
 import EditClaim from './pages/EditClaim';
@@ -26,8 +27,9 @@ import HydroPage from './features/hydro/HydroPage';
 export default function App() {
   return (
     <Routes>
+      <Route path="/welcome" element={<Landing />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
+      <Route path="/signup" element={<Landing />} />
 
       <Route element={<ProtectedRoute />}>
         {/* Global */}
