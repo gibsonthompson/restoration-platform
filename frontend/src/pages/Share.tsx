@@ -34,7 +34,10 @@ export default function Share() {
   const [msg, setMsg] = useState<{ kind: 'err' | 'ok'; text: string } | null>(null);
 
   const api = import.meta.env.VITE_API_URL as string | undefined;
-  const publicUrl = token && api ? `${api}/api/resto/public/${token}` : '';
+  // Served from the app's own domain (via the Vercel /api proxy) so the shared link
+  // shows your domain, not the DigitalOcean host. The trailing filename gives a clean
+  // name when saved/shared instead of the raw token.
+  const publicUrl = token ? `${window.location.origin}/api/resto/public/${token}/Restoration-Report.pdf` : '';
 
   async function authFetch(path: string, body: any) {
     const { data: { session } } = await supabase.auth.getSession();
