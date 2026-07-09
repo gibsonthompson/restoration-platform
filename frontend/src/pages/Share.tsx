@@ -19,6 +19,7 @@ export default function Share() {
 
   // public report link
   const [token, setToken] = useState<string | null>(null);
+  const [linkErr, setLinkErr] = useState<string | null>(null);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [claimName, setClaimName] = useState('');
   const [toEmail, setToEmail] = useState('');
@@ -63,8 +64,11 @@ export default function Share() {
     if (claim?.policyholder_email) setToEmail(claim.policyholder_email);
     setShares((sh as ShareRow[]) ?? []);
     if (api) {
-      const { res, json } = await authFetch('/api/resto/share-link', { claimId });
-      if (res.ok && json.token) setToken(json.token);
+      try {
+        const { res, json } = await authFetch('/api/resto/share-link', { claimId });
+        if (res.ok && json.token) { setToken(json.token); setLinkErr(null); }
+        else setLinkErr((json && json.error) || `share link failed (${res.status})`);
+      } catch { setLinkErr('could not reach the report service'); }
     }
   }
   useEffect(() => { void loadAll(); }, [claimId]);
@@ -118,6 +122,9 @@ export default function Share() {
           <div className="text-sm font-bold flex items-center gap-1.5"><Link2 size={15} className="text-brand" /> Send report</div>
 
           {!api && <p className="text-xs text-red-500">Sending is not configured (missing VITE_API_URL).</p>}
+          {api && !publicUrl && linkErr && (
+            <p className="text-xs text-red-500 leading-snug">Link unavailable: {linkErr}. Confirm the backend is deployed with the share routes and that migration 0022 (public_token) has been run.</p>
+          )}
 
           {api && (
             <>

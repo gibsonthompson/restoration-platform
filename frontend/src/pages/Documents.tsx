@@ -150,14 +150,9 @@ export default function Documents() {
 
           {preview.url && (
             <div className="px-4 pt-2 pb-3 border-t border-gray-100 safe-bottom">
-              <div className="flex gap-2">
-                <a href={preview.url} target="_blank" rel="noreferrer" className="btn-soft flex-1 py-3 justify-center text-sm">
-                  <ExternalLink size={16} /> Open
-                </a>
-                <a href={preview.downloadUrl || preview.url} className="btn-primary flex-1 py-3 justify-center text-sm">
-                  <Download size={16} /> Download
-                </a>
-              </div>
+              <a href={preview.downloadUrl || preview.url} className="btn-primary w-full py-3 justify-center text-sm">
+                <Download size={16} /> Download PDF
+              </a>
               <p className="text-[11px] text-gray-400 text-center mt-2 leading-snug">
                 On iPhone, tap <span className="font-semibold">Download</span>, then the share icon and <span className="font-semibold">"Save to Files"</span>. On Android/desktop it saves straight to your downloads.
               </p>
