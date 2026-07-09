@@ -4,6 +4,7 @@ import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera, Fan, 
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { SubHeader } from '../../components/SubHeader';
+import { SignaturePad } from '../../components/SignaturePad';
 import { grainsPerPound, dewPointF, airMoversNeeded, dehumidifiersNeeded } from './psychrometrics';
 import { DryingProgress } from './DryingProgress';
 
@@ -134,10 +135,12 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
   const [c, setC] = useState<Chamber>(chamber);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [stds, setStds] = useState<DryStd[]>([]);
-  const [form, setForm] = useState({ reading_type: 'psychrometric', location_label: '', temp_f: '', rh_pct: '', mc_value: '', material: '' });
+  const [form, setForm] = useState({ reading_type: 'psychrometric', location_label: '', temp_f: '', rh_pct: '', mc_value: '', material: '', tech: '' });
   const [stdDraft, setStdDraft] = useState<{ material: string; goal: string } | null>(null);
   const [equipment, setEquipment] = useState<Equip[]>([]);
   const [eqDraft, setEqDraft] = useState<{ type: string; count: string; make_model: string; placed_at: string; removed_at: string } | null>(null);
+  const [signoff, setSignoff] = useState<{ name: string; acceptable: boolean; sig: string | null } | null>(null);
+  const [signoffDone, setSignoffDone] = useState(false);
   const [ocr, setOcr] = useState(false);
   const meterRef = useRef<HTMLInputElement>(null);
 
@@ -177,6 +180,8 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
     setReadings((r as Reading[]) ?? []);
     setStds((s as DryStd[]) ?? []);
     setEquipment((eq as Equip[]) ?? []);
+    const { data: so } = await supabase.from('resto_claim_signatures').select('id, doc_snapshot').eq('claim_id', claimId).eq('doc_type', 'chamber_signoff');
+    setSignoffDone(((so as { doc_snapshot: any }[]) ?? []).some(x => x.doc_snapshot && x.doc_snapshot.chamber_id === c.id));
   }
   useEffect(() => { void loadAll(); }, [c.id]);
 
@@ -193,7 +198,7 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
       await supabase.from('resto_readings').insert({
         org_id: orgId, chamber_id: c.id, reading_type: 'material_mc',
         location_label: form.location_label || null, material_mc: mc, material: form.material || null,
-        captured_at: new Date().toISOString()
+        tech_initials: form.tech.trim() || null, captured_at: new Date().toISOString()
       });
       setForm({ ...form, location_label: '', mc_value: '' });
       await loadAll();
@@ -206,12 +211,23 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
     await supabase.from('resto_readings').insert({
       org_id: orgId, chamber_id: c.id, reading_type: form.reading_type,
       location_label: form.location_label || null, temp_f: temp, rh_pct: rh,
-      gpp, dew_point: dew, captured_at: new Date().toISOString()
+      gpp, dew_point: dew, tech_initials: form.tech.trim() || null, captured_at: new Date().toISOString()
     });
     setForm({ ...form, location_label: '', temp_f: '', rh_pct: '' });
     await loadAll();
   }
 
+  async function saveSignoff() {
+    if (!signoff || !signoff.sig || !signoff.name.trim()) return;
+    const { error } = await supabase.from('resto_claim_signatures').insert({
+      org_id: orgId, claim_id: claimId, doc_type: 'chamber_signoff',
+      signer_name: signoff.name.trim(), signer_role: 'supervisor', signature_data: signoff.sig,
+      doc_snapshot: { chamber_id: c.id, chamber_name: c.name, acceptable: signoff.acceptable }
+    });
+    if (error) { alert('Could not save sign-off: ' + error.message); return; }
+    setSignoff(null);
+    await loadAll();
+  }
   async function saveEquip() {
     if (!eqDraft) return;
     await supabase.from('resto_equipment').insert({
@@ -363,8 +379,12 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
                   value={form.reading_type} onChange={e => setForm({ ...form, reading_type: e.target.value })}>
             {READING_TYPES.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
-          <input className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Location label (e.g. NW corner)"
-                 value={form.location_label} onChange={e => setForm({ ...form, location_label: e.target.value })} />
+          <div className="grid grid-cols-3 gap-2">
+            <input className="col-span-2 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Location label (e.g. NW corner)"
+                   value={form.location_label} onChange={e => setForm({ ...form, location_label: e.target.value })} />
+            <input className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Tech" maxLength={6}
+                   value={form.tech} onChange={e => setForm({ ...form, tech: e.target.value })} />
+          </div>
           {form.reading_type === 'material_mc' ? (
             <div className="grid grid-cols-2 gap-2">
               <input type="number" className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" placeholder="Moisture %"
@@ -397,6 +417,17 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
         {/* Dry map: analysis, trend, goal comparison */}
         <DryingProgress readings={readings} stds={stds} />
 
+        <div className="card flex items-center gap-3">
+          <div className="flex-1">
+            <div className="font-bold text-sm">Supervisor sign-off</div>
+            <div className="text-[11px] text-gray-400 mt-0.5">{signoffDone ? 'This chamber has been signed off.' : 'Sign when drying is verified complete for this chamber.'}</div>
+          </div>
+          <button onClick={() => setSignoff({ name: '', acceptable: true, sig: null })}
+            className={signoffDone ? 'btn-soft px-3 py-2 text-sm' : 'btn-primary px-3 py-2 text-sm'}>
+            {signoffDone ? 'Re-sign' : 'Sign off'}
+          </button>
+        </div>
+
         {/* Drying log */}
         <div>
           <div className="text-sm font-bold mb-2">Drying log</div>
@@ -419,6 +450,31 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
           ))}
         </div>
       </div>
+      {signoff && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-navy/40 backdrop-blur-[1px]" onClick={() => setSignoff(null)} />
+          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl p-5">
+            <div className="font-display font-bold text-lg text-navy">Chamber sign-off</div>
+            <p className="text-xs text-gray-400 mt-0.5">{c.name || 'This chamber'} · supervisor verification of drying completion.</p>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Supervisor name</label>
+            <input autoFocus value={signoff.name} onChange={e => setSignoff({ ...signoff, name: e.target.value })} placeholder="Full name"
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-1 text-[16px] outline-none focus:border-sky" />
+            <label className="flex items-center justify-between mt-3">
+              <span className="text-sm font-semibold text-gray-600">Final moisture readings acceptable?</span>
+              <button onClick={() => setSignoff({ ...signoff, acceptable: !signoff.acceptable })} role="switch" aria-checked={signoff.acceptable}
+                className={`w-12 h-7 rounded-full shrink-0 transition relative ${signoff.acceptable ? 'bg-green-500' : 'bg-gray-300'}`}>
+                <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${signoff.acceptable ? 'left-6' : 'left-1'}`} />
+              </button>
+            </label>
+            <div className="mt-3"><SignaturePad onChange={sig => setSignoff(s => s ? { ...s, sig } : s)} /></div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setSignoff(null)} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+              <button onClick={saveSignoff} disabled={!signoff.sig || !signoff.name.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Save sign-off</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {eqDraft && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-navy/30" onClick={() => setEqDraft(null)} />

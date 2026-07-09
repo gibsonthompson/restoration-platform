@@ -12,7 +12,7 @@ interface Doc {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  preliminary_report: 'Preliminary Report', drying_report: 'Drying Report',
+  preliminary_report: 'Preliminary Report', drying_report: 'Drying Report', drying_log: 'Daily Drying Log',
   schedule_of_loss: 'Schedule of Loss', full_export: 'Full Report', upload: 'Upload', esx: 'Xactimate ESX'
 };
 const docName = (d: Doc) => d.title || TYPE_LABEL[d.type] || 'Report';
@@ -21,6 +21,7 @@ export default function Documents() {
   const { claimId } = useParams();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [busy, setBusy] = useState(false);
+  const [busyLog, setBusyLog] = useState(false);
   const [preview, setPreview] = useState<{ doc: Doc; url: string | null; loading: boolean; error: string | null } | null>(null);
 
   async function load() {
@@ -50,6 +51,24 @@ export default function Documents() {
     } finally { setBusy(false); }
   }
 
+  async function generateDryingLog() {
+    if (!claimId) return;
+    if (!API) { alert('Report service not configured. Set VITE_API_URL in Vercel.'); return; }
+    setBusyLog(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${API}/api/resto/drying-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ claimId })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || res.statusText); }
+      await load();
+    } catch (err: any) {
+      alert('Drying log failed: ' + (err?.message ?? 'unknown'));
+    } finally { setBusyLog(false); }
+  }
+
   // Open a details + preview sheet. The signed URL is fetched here (once), so the
   // "Open PDF" control in the sheet can be a plain anchor — no window.open after an
   // await, which is what the mobile popup blocker was killing.
@@ -67,6 +86,9 @@ export default function Documents() {
       <div className="p-4 space-y-3">
         <button onClick={generate} disabled={busy} className="btn-primary w-full py-3.5 disabled:opacity-60">
           <FilePlus size={17} /> {busy ? 'Generating report…' : 'Generate Full Report'}
+        </button>
+        <button onClick={generateDryingLog} disabled={busyLog} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
+          <FileText size={16} /> {busyLog ? 'Generating drying log…' : 'Generate Daily Drying Log'}
         </button>
 
         {docs.length === 0 && (
