@@ -15,7 +15,6 @@ import ScopePage from './pages/ScopePage';
 import ContentsPage from './pages/ContentsPage';
 import FormsPage from './pages/FormsPage';
 import Search from './pages/Search';
-import Notifications from './pages/Notifications';
 import OrgSettings from './pages/settings/OrgSettings';
 import TeamMembers from './pages/settings/TeamMembers';
 import HydroPage from './features/hydro/HydroPage';
@@ -33,7 +32,6 @@ export default function App() {
         {/* Global */}
         <Route path="/" element={<ClaimsList />} />
         <Route path="/search" element={<Search />} />
-        <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<OrgSettings />} />
         <Route path="/settings/team" element={<TeamMembers />} />
 
