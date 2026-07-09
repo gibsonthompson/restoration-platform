@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout , Package , FileSignature } from 'lucide-react';
+import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout , Package , FileSignature , Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
+import { signedUrl } from '../lib/storage';
 import { NameSheet } from '../components/NameSheet';
 import type { Claim, Structure } from '../types/models';
 
@@ -20,6 +21,8 @@ export default function ClaimDetail() {
   const [claim, setClaim] = useState<Claim | null>(null);
   const [structures, setStructures] = useState<Structure[]>([]);
   const [adding, setAdding] = useState(false);
+  const [strip, setStrip] = useState<{ id: string; url: string }[]>([]);
+  const [photoCount, setPhotoCount] = useState(0);
 
   async function load() {
     if (!claimId) return;
@@ -28,6 +31,13 @@ export default function ClaimDetail() {
     const { data: s } = await supabase.from('resto_structures').select('*')
       .eq('claim_id', claimId).order('sort_order');
     setStructures((s as Structure[]) ?? []);
+    const { data: ph, count } = await supabase.from('resto_media')
+      .select('id, storage_path', { count: 'exact' })
+      .eq('claim_id', claimId).eq('type', 'photo').order('captured_at', { ascending: false }).limit(10);
+    setPhotoCount(count ?? (ph?.length ?? 0));
+    const entries = await Promise.all(((ph as { id: string; storage_path: string }[]) ?? []).map(
+      async r => ({ id: r.id, url: (await signedUrl(r.storage_path)) || '' })));
+    setStrip(entries.filter(e => e.url));
   }
   useEffect(() => { void load(); }, [claimId]);
 
@@ -80,12 +90,27 @@ export default function ClaimDetail() {
           <Action icon={Package} label="Contents" to={`/claims/${claim.id}/contents`} />
           <Action icon={FileSignature} label="Forms" to={`/claims/${claim.id}/forms`} />
           <Action icon={FileText} label="Docs" to={`/claims/${claim.id}/documents`} />
+          <Action icon={ImageIcon} label="Photos" to={`/claims/${claim.id}/photos`} />
           <Action icon={StickyNote} label="Notes" to={`/claims/${claim.id}/notes`} />
           <Action icon={Share2} label="Share" to={`/claims/${claim.id}/share`} />
         </div>
       </div>
 
       <div className="p-4 space-y-3">
+        {photoCount > 0 && (
+          <button onClick={() => nav(`/claims/${claim.id}/photos`)} className="card w-full text-left active:scale-[.99] transition">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-bold text-sm flex items-center gap-1.5"><ImageIcon size={15} className="text-brand" /> Photos</div>
+              <span className="text-xs font-semibold text-sky flex items-center">View all {photoCount} <ChevronRight size={14} /></span>
+            </div>
+            <div className="flex gap-1.5 overflow-hidden">
+              {strip.slice(0, 6).map(p => (
+                <img key={p.id} src={p.url} className="w-16 h-16 rounded-lg object-cover shrink-0" />
+              ))}
+            </div>
+          </button>
+        )}
+
         <button onClick={() => setAdding(true)} className="btn-primary w-full py-3.5">
           <Plus size={18} /> Add structure
         </button>

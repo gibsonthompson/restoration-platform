@@ -14,6 +14,7 @@ import Share from './pages/Share';
 import ScopePage from './pages/ScopePage';
 import ContentsPage from './pages/ContentsPage';
 import FormsPage from './pages/FormsPage';
+import ClaimPhotos from './pages/ClaimPhotos';
 import Search from './pages/Search';
 import OrgSettings from './pages/settings/OrgSettings';
 import TeamMembers from './pages/settings/TeamMembers';
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/claims/:claimId" element={<ClaimDetail />} />
         <Route path="/claims/:claimId/edit" element={<EditClaim />} />
         <Route path="/claims/:claimId/documents" element={<Documents />} />
+        <Route path="/claims/:claimId/photos" element={<ClaimPhotos />} />
         <Route path="/claims/:claimId/notes" element={<GeneralNotes />} />
         <Route path="/claims/:claimId/events" element={<JobEvents />} />
         <Route path="/claims/:claimId/share" element={<Share />} />
