@@ -4,6 +4,7 @@ import { ChevronLeft, Package, ChevronDown, ChevronRight, Plus } from 'lucide-re
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { ContentsTab } from '../features/contents/ContentsTab';
+import { Loader } from '../components/Loader';
 import type { ContentsItem } from '../types/models';
 
 interface Structure { id: string; name: string | null }
@@ -61,6 +62,8 @@ export default function ContentsPage() {
   const countFor = (roomId: string) => items.filter(i => i.room_id === roomId).length;
   const lossFor = (roomId: string) => items.filter(i => i.room_id === roomId && isLoss(i.disposition)).length;
 
+  if (loading) return <Loader />;
+
   return (
     <div className="pb-10">
       <div className="safe-top bg-gradient-to-b from-navy-soft to-navy text-white px-4 pt-4 pb-5 rounded-b-3xl">
@@ -83,8 +86,7 @@ export default function ContentsPage() {
       </div>
 
       <div className="px-4 mt-4 space-y-4">
-        {loading && <p className="text-gray-400 text-sm">Loading…</p>}
-        {!loading && rooms.length === 0 && (
+        {rooms.length === 0 && (
           <p className="text-gray-400 text-sm">This claim has no rooms yet. Add a structure and rooms first, then log contents here.</p>
         )}
 

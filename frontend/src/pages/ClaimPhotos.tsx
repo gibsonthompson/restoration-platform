@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Image as ImageIcon, X, MapPin, ChevronLeft as Prev, ChevronRight as Next } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { signedUrl } from '../lib/storage';
+import { Loader } from '../components/Loader';
 
 interface Media {
   id: string; storage_path: string; caption: string | null;
@@ -57,6 +58,8 @@ export default function ClaimPhotos() {
 
   const view = viewIdx != null ? photos[viewIdx] : null;
 
+  if (loading) return <Loader />;
+
   return (
     <div className="pb-10">
       <div className="safe-top bg-gradient-to-b from-navy-soft to-navy text-white px-4 pt-4 pb-5 rounded-b-3xl">
@@ -68,8 +71,7 @@ export default function ClaimPhotos() {
       </div>
 
       <div className="px-4 mt-4 space-y-5">
-        {loading && <p className="text-gray-400 text-sm">Loading…</p>}
-        {!loading && photos.length === 0 && (
+        {photos.length === 0 && (
           <p className="text-gray-400 text-sm">No photos yet. Open a room and capture photos, they'll gather here as the job's visual record.</p>
         )}
 
