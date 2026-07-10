@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useOrg } from '../context/OrgContext';
 import { BottomNav } from './BottomNav';
+import { Logo } from './Loader';
 
 // App shell. `fixed inset-0` pins the shell to the actual VISIBLE viewport on
 // iOS (above the browser toolbar/home indicator), which vh/dvh units size
@@ -18,7 +19,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <div className="w-full max-w-[480px] h-full flex flex-col overflow-hidden bg-[#EDF1F6] shadow-[0_0_60px_rgba(14,42,77,0.10)]">
         {!inClaim && (
           <header className="safe-top bg-gradient-to-br from-navy-soft to-navy text-white px-5 pb-4 flex items-center justify-between shrink-0">
-            <span className="font-display font-extrabold text-[18px]">Restoration Docs</span>
+            <Logo variant="white" className="h-7 w-auto" />
             {activeOrg?.name && (
               <span className="text-xs font-semibold bg-white/20 px-2.5 py-1.5 rounded-full">{activeOrg.name}</span>
             )}

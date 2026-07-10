@@ -27,7 +27,7 @@ export default function Signup() {
           <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-sky to-sky-deep flex items-center justify-center shadow-soft">
             <Droplet size={22} className="text-white" />
           </div>
-          <span className="font-display font-bold text-lg text-navy">Restoration Docs</span>
+          <span className="font-display font-bold text-lg text-navy">DocuMate</span>
         </div>
 
         <h1 className="text-2xl font-bold text-navy">Create account</h1>

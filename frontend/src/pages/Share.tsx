@@ -9,7 +9,7 @@ interface ShareRow { id: string; email: string | null; role: string; created_at:
 const ERR: Record<string, string> = {
   claim_not_found: 'Claim not found.',
   forbidden: 'You do not have permission to share this claim.',
-  user_not_found: 'No account found for that email. They need a Restoration Docs login first.',
+  user_not_found: 'No account found for that email. They need a DocuMate login first.',
   cannot_share_with_self: 'That is your own account.',
   already_shared: 'This claim is already shared with that person.'
 };
@@ -190,7 +190,7 @@ export default function Share() {
               {msg.text}
             </div>
           )}
-          <p className="text-[11px] text-gray-400">For a teammate, sub, or adjuster with a Restoration Docs login. Editors can add and change job data; viewers and estimators are read-only.</p>
+          <p className="text-[11px] text-gray-400">For a teammate, sub, or adjuster with a DocuMate login. Editors can add and change job data; viewers and estimators are read-only.</p>
         </div>
 
         {shares.length > 0 && (

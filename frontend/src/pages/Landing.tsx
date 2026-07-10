@@ -55,7 +55,7 @@ export default function Landing() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky to-sky-deep flex items-center justify-center shadow-soft">
               <Droplet size={17} className="text-white" />
             </div>
-            <span className="font-display font-bold text-[16px]">Restoration Docs</span>
+            <span className="font-display font-bold text-[16px]">DocuMate</span>
           </div>
           <div className="flex items-center gap-4 text-sm">
             <Link to="/login" className="font-semibold text-gray-500 hover:text-navy">Sign in</Link>
@@ -175,7 +175,7 @@ export default function Landing() {
             <div className="inline-flex items-center gap-1.5 text-[12px] font-bold text-sky-deep bg-white rounded-full px-3 py-1.5 mb-4 shadow-soft"><ShieldCheck size={13} /> Claim Defense</div>
             <h2 className="font-display font-extrabold text-[28px] sm:text-[32px] leading-tight">The audit the adjuster runs, run on yourself first.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Before a package goes out, Restoration Docs scores the claim and flags the gaps carriers scrub on, missing daily readings, unsigned authorizations, thin monitoring, equipment that doesn’t match the S500 calc. Fix it before you submit, not after you’re shorted.
+              Before a package goes out, DocuMate scores the claim and flags the gaps carriers scrub on, missing daily readings, unsigned authorizations, thin monitoring, equipment that doesn’t match the S500 calc. Fix it before you submit, not after you’re shorted.
             </p>
             <ul className="mt-5 space-y-2.5">
               {['S500‑aligned drying guardrails', 'Timestamped, GPS‑stamped photo proof', 'Equipment‑days that defend the invoice', 'Nothing auto‑submits, you review everything'].map((f) => (
@@ -224,7 +224,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-5 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-gray-400">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-md bg-gradient-to-br from-sky to-sky-deep flex items-center justify-center"><Droplet size={13} className="text-white" /></div>
-            <span className="font-display font-bold text-navy">Restoration Docs</span>
+            <span className="font-display font-bold text-navy">DocuMate</span>
           </div>
           <div className="flex items-center gap-5">
             <Link to="/login" className="hover:text-navy">Sign in</Link>
