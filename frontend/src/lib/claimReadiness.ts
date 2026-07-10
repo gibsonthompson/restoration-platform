@@ -42,6 +42,15 @@ export function computeReadiness(input: ReadinessInput): ReadinessResult {
   const checks: ReadinessCheck[] = [];
   const hasChambers = chambers.length > 0;
 
+  // Where drying issues should send you: the Hydro page of the structure that owns
+  // the chambers. Previously these pointed at `/claims/:id` (the Overview the card
+  // already sits on), so tapping them navigated nowhere visible and felt dead.
+  // Fall back to the Overview only when there is genuinely no structure yet.
+  const hydroStructId = (chambers[0] && chambers[0].structure_id) || null;
+  const hydroTo = hydroStructId
+    ? `/claims/${input.claimId}/structures/${hydroStructId}/hydro`
+    : `/claims/${input.claimId}`;
+
   // 1) Loss details complete (adjusters reject on missing cat/class/DOL)
   {
     const missing = [
@@ -121,7 +130,7 @@ export function computeReadiness(input: ReadinessInput): ReadinessResult {
       id: 'monitoring', label: 'Daily drying monitoring',
       status: staleChambers > 0 ? 'fail' : worstGap > 0 ? 'warn' : 'pass',
       detail: staleChambers > 0 ? `${staleChambers} chamber${staleChambers === 1 ? '' : 's'} missing recent or any readings.` : worstGap > 0 ? `${worstGap} skipped monitoring day${worstGap === 1 ? '' : 's'} detected.` : 'Readings recorded on consecutive days.',
-      to: `/claims/${input.claimId}` // Hydro entry lives under the claim
+      to: hydroTo
     });
 
     // 7) 3+ monitoring points per chamber (S500)
@@ -135,7 +144,7 @@ export function computeReadiness(input: ReadinessInput): ReadinessResult {
         id: 'points', label: '3+ monitoring points per chamber',
         status: thin === 0 ? 'pass' : 'warn',
         detail: thin === 0 ? 'Every chamber has at least 3 reading locations.' : `${thin} chamber${thin === 1 ? '' : 's'} have fewer than 3 monitoring points.`,
-        to: `/claims/${input.claimId}`
+        to: hydroTo
       });
     }
 
@@ -146,7 +155,7 @@ export function computeReadiness(input: ReadinessInput): ReadinessResult {
         id: 'equipment', label: 'Equipment days logged',
         status: withDates > 0 ? 'pass' : 'fail',
         detail: withDates > 0 ? `${withDates} equipment record${withDates === 1 ? '' : 's'} with placement dates.` : 'No equipment logged with dates.',
-        to: `/claims/${input.claimId}`
+        to: hydroTo
       });
     }
 
@@ -158,7 +167,7 @@ export function computeReadiness(input: ReadinessInput): ReadinessResult {
         id: 'gpp', label: 'Grains (GPP) recorded',
         status: psy.length === 0 ? 'warn' : withGpp === psy.length ? 'pass' : 'warn',
         detail: psy.length === 0 ? 'No psychrometric readings yet.' : withGpp === psy.length ? 'GPP computed on all atmospheric readings.' : `${psy.length - withGpp} readings missing GPP.`,
-        to: `/claims/${input.claimId}`
+        to: hydroTo
       });
     }
   }
