@@ -24,22 +24,6 @@ header, nav, button { -webkit-user-select: none; user-select: none; }
 .safe-top    { padding-top: calc(env(safe-area-inset-top) + 1.25rem); }
 .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem); }
 
-/* Route/content entrances. Switching tabs eases the new page in instead of
-   snapping. Opacity-only (no transform) on purpose: a transform on an ancestor
-   creates a containing block that would dislodge a position:fixed overlay (the
-   photo viewer, the moisture editor). Keyed by pathname so it replays per nav. */
-@keyframes pageFade { from { opacity: 0; } to { opacity: 1; } }
-.page-fade { animation: pageFade 200ms ease-out both; }
-
-/* Drop on any block that appears once its data is ready, to fade it in rather
-   than pop (e.g. a card that renders null until loaded). */
-@keyframes contentFade { from { opacity: 0; } to { opacity: 1; } }
-.fade-in { animation: contentFade 220ms ease-out both; }
-
-@media (prefers-reduced-motion: reduce) {
-  .page-fade, .fade-in { animation: none; }
-}
-
 @layer components {
   .card { @apply bg-white rounded-2xl shadow-soft p-4; }
   .input { @apply bg-white rounded-2xl shadow-soft px-4 py-3 outline-none w-full text-[15px]; }

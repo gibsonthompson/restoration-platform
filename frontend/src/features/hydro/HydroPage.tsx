@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
 import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera, Fan, Package } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -50,6 +51,7 @@ export default function HydroPage() {
   const [chambers, setChambers] = useState<Chamber[]>([]);
   const [sel, setSel] = useState<Chamber | null>(null);
   const [newName, setNewName] = useState<string | null>(null);
+  const [structureName, setStructureName] = useState('');
 
   async function load() {
     if (!structureId) return;
@@ -58,6 +60,12 @@ export default function HydroPage() {
     setChambers((data as Chamber[]) ?? []);
   }
   useEffect(() => { void load(); }, [structureId]);
+  // Show which structure this Hydro belongs to (a claim can have several).
+  useEffect(() => {
+    if (!structureId) return;
+    supabase.from('resto_structures').select('name').eq('id', structureId).single()
+      .then(({ data }) => setStructureName((data as { name: string } | null)?.name ?? ''));
+  }, [structureId]);
 
   async function createChamber() {
     if (!activeOrg || !structureId || !newName || !newName.trim()) { setNewName(null); return; }
@@ -69,11 +77,11 @@ export default function HydroPage() {
     if (data) setSel(data as Chamber);
   }
 
-  if (sel) return <ChamberDetail chamber={sel} orgId={activeOrg!.id} claimId={claimId} onBack={() => { setSel(null); void load(); }} />;
+  if (sel) return <ChamberDetail chamber={sel} orgId={activeOrg!.id} claimId={claimId} structureName={structureName} onBack={() => { setSel(null); void load(); }} />;
 
   return (
     <div>
-      <SubHeader title="Hydro: Job Setup" subtitle="S500 structural drying" />
+      <SubHeader title="Hydro: Job Setup" subtitle={`${structureName || 'Structure'} · S500 structural drying`} />
       <div className="p-4 space-y-3">
         <button onClick={() => setNewName('')} className="btn-primary w-full py-3">
           <Plus size={16} /> Add drying chamber
@@ -93,19 +101,20 @@ export default function HydroPage() {
           </button>
         ))}
       </div>
-      {newName !== null && <ChamberNameSheet value={newName} onChange={setNewName} onSave={createChamber} onClose={() => setNewName(null)} />}
+      {newName !== null && <ChamberNameSheet value={newName} structureName={structureName} onChange={setNewName} onSave={createChamber} onClose={() => setNewName(null)} />}
     </div>
   );
 }
 
 // Downscale a photo to a base64 JPEG small enough to POST for OCR.
-function ChamberNameSheet({ value, onChange, onSave, onClose }:
-  { value: string; onChange: (v: string) => void; onSave: () => void; onClose: () => void }) {
-  return (
+function ChamberNameSheet({ value, structureName, onChange, onSave, onClose }:
+  { value: string; structureName?: string; onChange: (v: string) => void; onSave: () => void; onClose: () => void }) {
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-5">
       <div className="absolute inset-0 bg-navy/40 backdrop-blur-[1px]" onClick={onClose} />
       <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl p-5">
         <div className="font-display font-bold text-lg text-navy">New drying chamber</div>
+        {structureName && <div className="text-[11px] font-bold uppercase tracking-wide text-sky-deep mt-0.5">in {structureName}</div>}
         <p className="text-xs text-gray-400 mt-0.5">Group the rooms that dry together (e.g. Basement, Main Level).</p>
         <input autoFocus placeholder="Chamber name" value={value} onChange={e => onChange(e.target.value)}
           className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] outline-none focus:border-sky" />
@@ -114,7 +123,8 @@ function ChamberNameSheet({ value, onChange, onSave, onClose }:
           <button onClick={onSave} disabled={!value.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Create</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -130,8 +140,8 @@ async function fileToScaledBase64(file: File, max = 1400): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 }
 
-function ChamberDetail({ chamber, orgId, claimId, onBack }:
-  { chamber: Chamber; orgId: string; claimId?: string; onBack: () => void }) {
+function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
+  { chamber: Chamber; orgId: string; claimId?: string; structureName?: string; onBack: () => void }) {
   const [c, setC] = useState<Chamber>(chamber);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [stds, setStds] = useState<DryStd[]>([]);
@@ -291,7 +301,10 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
     <div>
       <div className="safe-top bg-gradient-to-b from-navy-soft to-navy text-white px-4 pt-4 pb-4 rounded-b-3xl flex items-center gap-2">
         <button onClick={onBack} className="w-9 h-9 rounded-xl bg-white/12 flex items-center justify-center active:scale-95 transition"><ChevronLeft size={20} /></button>
-        <div className="font-display font-bold text-lg">{c.name}</div>
+        <div className="min-w-0">
+          {structureName && <div className="text-[11px] font-semibold uppercase tracking-wide text-white/60 leading-none mb-0.5 truncate">{structureName}</div>}
+          <div className="font-display font-bold text-lg leading-tight truncate">{c.name}</div>
+        </div>
       </div>
 
       <div className="p-4 space-y-4">
@@ -450,7 +463,7 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
           ))}
         </div>
       </div>
-      {signoff && (
+      {signoff && createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-5">
           <div className="absolute inset-0 bg-navy/40 backdrop-blur-[1px]" onClick={() => setSignoff(null)} />
           <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl p-5">
@@ -472,10 +485,11 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
               <button onClick={saveSignoff} disabled={!signoff.sig || !signoff.name.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Save sign-off</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {eqDraft && (
+      {eqDraft && createPortal(
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-navy/30" onClick={() => setEqDraft(null)} />
           <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
@@ -499,10 +513,11 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
               <button onClick={saveEquip} className="flex-1 btn-primary py-3 justify-center">Save</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {stdDraft && (
+      {stdDraft && createPortal(
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
           <div className="absolute inset-0 bg-navy/30" onClick={() => setStdDraft(null)} />
           <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
@@ -519,7 +534,8 @@ function ChamberDetail({ chamber, orgId, claimId, onBack }:
               <button onClick={saveStd} disabled={!stdDraft.material.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Save</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
