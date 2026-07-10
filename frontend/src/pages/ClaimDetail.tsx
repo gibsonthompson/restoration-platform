@@ -6,6 +6,8 @@ import { useOrg } from '../context/OrgContext';
 import { signedUrl } from '../lib/storage';
 import { ClaimReadiness } from '../components/ClaimReadiness';
 import { NameSheet } from '../components/NameSheet';
+import { Loader } from '../components/Loader';
+import { computeReadiness, type ReadinessResult } from '../lib/claimReadiness';
 import type { Claim, Structure } from '../types/models';
 
 const lossChip = (t: string | null) =>
@@ -24,21 +26,60 @@ export default function ClaimDetail() {
   const [adding, setAdding] = useState(false);
   const [strip, setStrip] = useState<{ id: string; url: string }[]>([]);
   const [photoCount, setPhotoCount] = useState(0);
+  const [readiness, setReadiness] = useState<ReadinessResult | null>(null);
+  const [ready, setReady] = useState(false);
 
+  // One coordinated load. Fetch the claim, its structures, all photos, and
+  // everything the readiness engine needs, compute the score, resolve the photo
+  // strip URLs, THEN commit it all at once. The page shows the logo loader until
+  // `ready`, so it reveals fully populated instead of popping in section by
+  // section. `ready` never goes back to false, so a later refresh (e.g. after
+  // adding a structure) updates in place without flashing the loader again.
   async function load() {
     if (!claimId) return;
     const { data: c } = await supabase.from('resto_claims').select('*').eq('id', claimId).single();
-    setClaim(c as Claim);
+    if (!c) { setClaim(null); setReady(true); return; }
+
     const { data: s } = await supabase.from('resto_structures').select('*')
       .eq('claim_id', claimId).order('sort_order');
-    setStructures((s as Structure[]) ?? []);
-    const { data: ph, count } = await supabase.from('resto_media')
-      .select('id, storage_path', { count: 'exact' })
-      .eq('claim_id', claimId).eq('type', 'photo').order('captured_at', { ascending: false }).limit(10);
-    setPhotoCount(count ?? (ph?.length ?? 0));
-    const entries = await Promise.all(((ph as { id: string; storage_path: string }[]) ?? []).map(
+    const structs = (s as Structure[]) ?? [];
+    const structIds = structs.map(x => x.id);
+
+    const [roomsR, chambersR, photosR, sigsR] = await Promise.all([
+      structIds.length ? supabase.from('resto_rooms').select('id, structure_id').in('structure_id', structIds) : Promise.resolve({ data: [] as any[] }),
+      structIds.length ? supabase.from('resto_drying_chambers').select('id, structure_id').in('structure_id', structIds) : Promise.resolve({ data: [] as any[] }),
+      supabase.from('resto_media').select('id, storage_path, room_id, captured_at').eq('claim_id', claimId).eq('type', 'photo').order('captured_at', { ascending: false }),
+      supabase.from('resto_claim_signatures').select('doc_type, doc_snapshot').eq('claim_id', claimId)
+    ]);
+    const rooms = roomsR.data ?? [];
+    const chambers = chambersR.data ?? [];
+    const allPhotos = (photosR.data as { id: string; storage_path: string; room_id: string | null }[]) ?? [];
+    const roomIds = rooms.map((r: any) => r.id);
+    const chamberIds = chambers.map((ch: any) => ch.id);
+
+    const [sketchesR, readingsR, equipmentR] = await Promise.all([
+      roomIds.length ? supabase.from('resto_sketches').select('room_id, canvas_json').in('room_id', roomIds) : Promise.resolve({ data: [] as any[] }),
+      chamberIds.length ? supabase.from('resto_readings').select('chamber_id, reading_type, location_label, captured_at, gpp, material_mc').in('chamber_id', chamberIds) : Promise.resolve({ data: [] as any[] }),
+      chamberIds.length ? supabase.from('resto_equipment').select('chamber_id, placed_at').in('chamber_id', chamberIds) : Promise.resolve({ data: [] as any[] })
+    ]);
+
+    const result = computeReadiness({
+      claimId, claim: c,
+      rooms, photos: allPhotos, sketches: sketchesR.data ?? [],
+      chambers, readings: readingsR.data ?? [], equipment: equipmentR.data ?? [],
+      signatures: sigsR.data ?? []
+    });
+
+    const stripRows = allPhotos.slice(0, 10);
+    const entries = await Promise.all(stripRows.map(
       async r => ({ id: r.id, url: (await signedUrl(r.storage_path)) || '' })));
+
+    setClaim(c as Claim);
+    setStructures(structs);
+    setPhotoCount(allPhotos.length);
     setStrip(entries.filter(e => e.url));
+    setReadiness(result);
+    setReady(true);
   }
   useEffect(() => { void load(); }, [claimId]);
 
@@ -50,7 +91,8 @@ export default function ClaimDetail() {
     setAdding(false); void load();
   }
 
-  if (!claim) return <div className="p-4 text-gray-400">Loading...</div>;
+  if (!ready) return <Loader />;
+  if (!claim) return <div className="p-4 text-gray-400">Claim not found.</div>;
 
   const chip = lossChip(claim.type_of_loss);
   const Action = ({ icon: Icon, label, to }: { icon: any; label: string; to: string }) => (
@@ -98,7 +140,7 @@ export default function ClaimDetail() {
       </div>
 
       <div className="p-4 space-y-3">
-        <ClaimReadiness claimId={claim.id} />
+        {readiness && <ClaimReadiness result={readiness} />}
 
         {photoCount > 0 && (
           <button onClick={() => nav(`/claims/${claim.id}/photos`)} className="card w-full text-left active:scale-[.99] transition">

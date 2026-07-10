@@ -1,47 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, ShieldAlert, ShieldX, ChevronDown, ChevronRight, Check, AlertTriangle, X } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { computeReadiness, type ReadinessResult, type CheckStatus } from '../lib/claimReadiness';
+import { type ReadinessResult, type CheckStatus } from '../lib/claimReadiness';
 
-// Pre-submission "scrub-proof" readiness card. Reads existing claim data, runs
-// the deterministic readiness engine, and shows a score + fixable checklist.
-export function ClaimReadiness({ claimId }: { claimId: string }) {
+// Pre-submission "scrub-proof" readiness card. Presentational: the claim page
+// computes the result as part of its single load and passes it in, so this card
+// appears with the rest of the page instead of fetching on its own and popping
+// in a beat later.
+export function ClaimReadiness({ result }: { result: ReadinessResult }) {
   const nav = useNavigate();
-  const [result, setResult] = useState<ReadinessResult | null>(null);
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      const { data: claim } = await supabase.from('resto_claims').select('*').eq('id', claimId).maybeSingle();
-      if (!claim) return;
-      const { data: structures } = await supabase.from('resto_structures').select('id').eq('claim_id', claimId);
-      const structIds = (structures ?? []).map((s) => s.id);
-      const { data: rooms } = structIds.length
-        ? await supabase.from('resto_rooms').select('id, structure_id').in('structure_id', structIds)
-        : { data: [] as any[] };
-      const roomIds = (rooms ?? []).map((r) => r.id);
-      const { data: chambers } = structIds.length
-        ? await supabase.from('resto_drying_chambers').select('id, structure_id').in('structure_id', structIds)
-        : { data: [] as any[] };
-      const chamberIds = (chambers ?? []).map((c) => c.id);
-
-      const [photosR, sketchesR, readingsR, equipmentR, sigsR] = await Promise.all([
-        supabase.from('resto_media').select('room_id, type').eq('claim_id', claimId).eq('type', 'photo'),
-        roomIds.length ? supabase.from('resto_sketches').select('room_id, canvas_json').in('room_id', roomIds) : Promise.resolve({ data: [] as any[] }),
-        chamberIds.length ? supabase.from('resto_readings').select('chamber_id, reading_type, location_label, captured_at, gpp, material_mc').in('chamber_id', chamberIds) : Promise.resolve({ data: [] as any[] }),
-        chamberIds.length ? supabase.from('resto_equipment').select('chamber_id, placed_at').in('chamber_id', chamberIds) : Promise.resolve({ data: [] as any[] }),
-        supabase.from('resto_claim_signatures').select('doc_type, doc_snapshot').eq('claim_id', claimId)
-      ]);
-
-      setResult(computeReadiness({
-        claimId, claim,
-        rooms: rooms ?? [], photos: photosR.data ?? [], sketches: sketchesR.data ?? [],
-        chambers: chambers ?? [], readings: readingsR.data ?? [], equipment: equipmentR.data ?? [],
-        signatures: sigsR.data ?? []
-      }));
-    })();
-  }, [claimId]);
 
   if (!result) return null;
 
