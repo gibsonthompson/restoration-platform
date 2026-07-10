@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
-import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera, Fan, Package } from 'lucide-react';
+import { Plus, ChevronLeft, Droplets, Gauge, Target, Trash2, Wind, Camera, Fan, Package, Check, Map as MapIcon } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { SubHeader } from '../../components/SubHeader';
@@ -34,6 +34,15 @@ function equipDays(e: Equip): number {
   const end = (e.removed_at ? new Date(e.removed_at + 'T00:00:00') : new Date()).getTime();
   return Math.max(1, Math.round((end - start) / 86400000) + (e.removed_at ? 1 : 0));
 }
+
+// Summarize a per-type tally like { air_mover: 2, dehumidifier: 1 } as "2 air movers · 1 dehu".
+function equipCountSummary(counts: Record<string, number>): string {
+  const order = ['air_mover', 'dehumidifier', 'air_scrubber', 'heater'];
+  return order.filter(k => counts[k] > 0)
+    .map(k => `${counts[k]} ${equipLabel(k).toLowerCase()}${counts[k] > 1 ? 's' : ''}`)
+    .join(' · ');
+}
+interface RoomTally { roomId: string; roomName: string; counts: Record<string, number>; total: number; }
 
 const READING_TYPES = [
   { v: 'psychrometric', l: 'Affected (interior)' },
@@ -77,7 +86,7 @@ export default function HydroPage() {
     if (data) setSel(data as Chamber);
   }
 
-  if (sel) return <ChamberDetail chamber={sel} orgId={activeOrg!.id} claimId={claimId} structureName={structureName} onBack={() => { setSel(null); void load(); }} />;
+  if (sel) return <ChamberDetail chamber={sel} orgId={activeOrg!.id} claimId={claimId} structureName={structureName} structureId={structureId} onBack={() => { setSel(null); void load(); }} />;
 
   return (
     <div>
@@ -140,8 +149,8 @@ async function fileToScaledBase64(file: File, max = 1400): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 }
 
-function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
-  { chamber: Chamber; orgId: string; claimId?: string; structureName?: string; onBack: () => void }) {
+function ChamberDetail({ chamber, orgId, claimId, structureName, structureId, onBack }:
+  { chamber: Chamber; orgId: string; claimId?: string; structureName?: string; structureId?: string; onBack: () => void }) {
   const [c, setC] = useState<Chamber>(chamber);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [stds, setStds] = useState<DryStd[]>([]);
@@ -153,6 +162,9 @@ function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
   const [signoffDone, setSignoffDone] = useState(false);
   const [ocr, setOcr] = useState(false);
   const meterRef = useRef<HTMLInputElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importRooms, setImportRooms] = useState<RoomTally[] | null>(null);
+  const [importSel, setImportSel] = useState<Set<string>>(new Set());
 
   // Snap a thermo-hygrometer photo -> Claude vision OCR -> auto-fill temp + RH.
   async function onMeterPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -250,6 +262,53 @@ function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
     setEqDraft(null);
     await loadAll();
   }
+  // Pull equipment placed on this structure's room moisture maps. The tech
+  // picks which rooms feed this chamber, so a single-chamber structure imports
+  // everything and a multi-chamber structure imports only its rooms (no double
+  // count). Sketch equipment types (air_mover/dehumidifier/air_scrubber) already
+  // match the equipment-log types, so the tally maps straight across.
+  async function openImport() {
+    setImportRooms(null);
+    setImportOpen(true);
+    if (!structureId) { setImportRooms([]); return; }
+    const { data: rooms } = await supabase.from('resto_rooms').select('id, name')
+      .eq('structure_id', structureId).order('sort_order');
+    const roomList = (rooms as { id: string; name: string | null }[]) ?? [];
+    if (!roomList.length) { setImportRooms([]); return; }
+    const { data: sketches } = await supabase.from('resto_sketches')
+      .select('room_id, canvas_json').in('room_id', roomList.map(r => r.id));
+    const byRoom: Record<string, Record<string, number>> = {};
+    ((sketches as { room_id: string; canvas_json: any }[]) ?? []).forEach(s => {
+      const eq = s.canvas_json?.equipment ?? [];
+      const counts = (byRoom[s.room_id] ??= {});
+      eq.forEach((e: any) => { if (e?.type) counts[e.type] = (counts[e.type] || 0) + 1; });
+    });
+    const tallies: RoomTally[] = roomList.map(r => {
+      const counts = byRoom[r.id] ?? {};
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      return { roomId: r.id, roomName: r.name || 'Room', counts, total };
+    }).filter(t => t.total > 0);
+    setImportRooms(tallies);
+    setImportSel(new Set(tallies.map(t => t.roomId)));
+  }
+  function toggleImportRoom(id: string) {
+    setImportSel(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  async function confirmImport() {
+    const totals: Record<string, number> = {};
+    (importRooms ?? []).forEach(r => {
+      if (importSel.has(r.roomId)) Object.entries(r.counts).forEach(([k, v]) => { totals[k] = (totals[k] || 0) + v; });
+    });
+    const rows = Object.entries(totals).filter(([, n]) => n > 0).map(([type, n]) => ({
+      org_id: orgId, chamber_id: c.id, type, actual_placed: n, placed_at: todayISO(), removed_at: null, make_model: null
+    }));
+    if (rows.length) {
+      const { error } = await supabase.from('resto_equipment').insert(rows);
+      if (error) { alert('Could not import: ' + error.message); return; }
+    }
+    setImportOpen(false);
+    await loadAll();
+  }
   async function markRemoved(id: string) {
     await supabase.from('resto_equipment').update({ removed_at: todayISO() }).eq('id', id);
     await loadAll();
@@ -284,6 +343,12 @@ function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
     const d = new Date(r.captured_at).toLocaleDateString();
     (grouped[d] ??= []).push(r);
   });
+
+  const importTotals: Record<string, number> = {};
+  (importRooms ?? []).forEach(r => {
+    if (importSel.has(r.roomId)) Object.entries(r.counts).forEach(([k, v]) => { importTotals[k] = (importTotals[k] || 0) + v; });
+  });
+  const importTotalCount = Object.values(importTotals).reduce((a, b) => a + b, 0);
 
   // Inline function call ({dimField(...)}) instead of <DimInput/> so the field
   // is not remounted on each keystroke (saveDims re-renders) and keeps focus.
@@ -346,7 +411,10 @@ function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
         <div className="card">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm font-bold flex items-center gap-1"><Fan size={15} className="text-brand" /> Equipment on site</div>
-            <button onClick={() => setEqDraft({ type: 'air_mover', count: '1', make_model: '', placed_at: todayISO(), removed_at: '' })} className="text-brand text-sm font-medium">+ Add</button>
+            <div className="flex items-center gap-3">
+              <button onClick={openImport} className="text-sky text-sm font-medium flex items-center gap-1"><MapIcon size={14} /> From maps</button>
+              <button onClick={() => setEqDraft({ type: 'air_mover', count: '1', make_model: '', placed_at: todayISO(), removed_at: '' })} className="text-brand text-sm font-medium">+ Add</button>
+            </div>
           </div>
           {equipment.length === 0 && <p className="text-xs text-gray-400">Log air movers, dehus, and scrubbers with dates to justify equipment days on the invoice.</p>}
           {equipment.map(e => {
@@ -533,6 +601,46 @@ function ChamberDetail({ chamber, orgId, claimId, structureName, onBack }:
               <button onClick={() => setStdDraft(null)} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
               <button onClick={saveStd} disabled={!stdDraft.material.trim()} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Save</button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {importOpen && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-navy/30" onClick={() => setImportOpen(false)} />
+          <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-xl p-4 max-h-[85vh] overflow-y-auto" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+            <div className="font-display font-bold text-lg text-navy">Import from moisture maps</div>
+            <p className="text-xs text-gray-400 mt-0.5">Pull equipment placed on room sketches into {c.name || 'this chamber'}. Pick the rooms that belong to this chamber.</p>
+            {equipment.length > 0 && <p className="text-[11px] text-amber-600 mt-2">This chamber already has equipment logged. Importing adds to it.</p>}
+            {importRooms === null && <p className="text-sm text-gray-400 py-8 text-center">Reading moisture maps...</p>}
+            {importRooms !== null && importRooms.length === 0 && (
+              <p className="text-sm text-gray-400 py-8 text-center">No equipment is placed on any room's moisture map in this structure yet. Drop air movers, dehus, or scrubbers on a room sketch first.</p>
+            )}
+            {importRooms && importRooms.length > 0 && (
+              <>
+                <div className="mt-3 space-y-2">
+                  {importRooms.map(r => {
+                    const on = importSel.has(r.roomId);
+                    return (
+                      <button key={r.roomId} onClick={() => toggleImportRoom(r.roomId)}
+                        className={`w-full text-left rounded-xl border p-3 flex items-center gap-3 transition ${on ? 'border-sky bg-sky-soft' : 'border-gray-200'}`}>
+                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${on ? 'bg-sky border-sky text-white' : 'border-gray-300'}`}>{on && <Check size={14} />}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-sm truncate">{r.roomName}</div>
+                          <div className="text-[11px] text-gray-400">{equipCountSummary(r.counts)}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[12px] font-bold text-gray-600 mt-3">{importTotalCount > 0 ? `Selected: ${equipCountSummary(importTotals)}` : 'No rooms selected'}</div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => setImportOpen(false)} className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50">Cancel</button>
+                  <button onClick={confirmImport} disabled={importTotalCount === 0} className="flex-1 btn-primary py-3 justify-center disabled:opacity-40">Add {importTotalCount} item{importTotalCount === 1 ? '' : 's'}</button>
+                </div>
+              </>
+            )}
           </div>
         </div>,
         document.body
