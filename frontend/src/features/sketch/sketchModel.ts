@@ -5,7 +5,7 @@
 export type EquipType = 'air_mover' | 'dehumidifier' | 'air_scrubber';
 export type Pt = [number, number];
 
-export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint
+export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; disposition?: 'dry' | 'remove'; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint; disposition = dry-in-place (extraction) vs remove (flooring tear-out) for the Xactimate export
 // Xactimate-shaped demo/prep scope, measured from sketch geometry:
 export interface FloodCut { wallId: string; edge: number; heightFt: number; lengthFt?: number; startFt?: number; }   // DRYW flood-cut: LF at cut height, positioned startFt from the edge start
 export interface Containment { id: string; heightFt: number; x?: number; y?: number; widthFt?: number; label?: string; from?: Pt; to?: Pt; }   // PLASTIC barrier: width x height (tap-placed); from/to legacy

@@ -1028,6 +1028,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, on
               </div>
               <input value={wa.material ?? ''} onChange={e => setWet({ material: e.target.value })}
                 placeholder="Or type a material name" className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] focus:outline-none focus:border-sky" />
+              {(wa.surface ?? 'floor') === 'floor' && (
+                <>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Flooring plan</label>
+                  <div className="flex bg-gray-100 rounded-full p-0.5 mt-1">
+                    {([['dry', 'Dry in place'], ['remove', 'Remove / tear out']] as [string, string][]).map(([val, lbl]) => (
+                      <button key={val} onClick={() => setWet({ disposition: val as 'dry' | 'remove' })}
+                        className={`flex-1 py-1.5 rounded-full text-xs font-bold ${(wa.disposition ?? 'dry') === val ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{lbl}</button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1">Dry in place bills water extraction. Remove bills flooring tear-out.</p>
+                </>
+              )}
               <button onClick={() => setPendingWetId(null)} className="btn-primary w-full py-3 justify-center mt-4">Done</button>
             </div>
           </div>

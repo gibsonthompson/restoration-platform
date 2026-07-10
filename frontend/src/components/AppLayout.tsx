@@ -25,7 +25,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </header>
         )}
         <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-none"
-              style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' }}>{children}</main>
+              style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' }}>
+          {/* keyed by pathname so the entrance animation replays on every tab switch */}
+          <div key={pathname} className="page-fade">{children}</div>
+        </main>
         <BottomNav />
       </div>
     </div>
