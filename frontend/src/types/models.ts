@@ -3,6 +3,31 @@
 export type Role = 'owner' | 'manager' | 'lead_tech' | 'tech';
 export type TypeOfLoss = 'water' | 'fire' | 'mold' | 'other';
 
+// How the loss began. This is the gradual-vs-sudden determination: policies cover
+// sudden and accidental damage and exclude gradual deterioration, so this single
+// field is the most common ground a water claim is denied on outright.
+export type LossOnset = 'sudden' | 'gradual' | 'unknown';
+
+export type PolicyType = 'homeowner' | 'commercial' | 'renter' | 'condo' | 'other';
+export type DeductibleApplies = 'all_coverages' | 'coverage_specific';
+
+// Xactimate Coverages & Loss. Xactimate auto-creates rows for Dwelling, Other
+// Structures, Contents, and Loss of Use; others can be added.
+export type CoverageType = 'dwelling' | 'other_structures' | 'contents' | 'loss_of_use' | 'other';
+export interface Coverage {
+  type: CoverageType;
+  name: string;
+  limit: number | null;
+  deductible: number | null;
+  apply_to: 'rc' | 'acv' | 'both' | null;   // replacement cost / actual cash value
+}
+
+// What a photo actually shows, so readiness can flag a billed line with no photo
+// behind it. null = untagged (photos captured before this existed).
+export type PhotoKind =
+  | 'overview' | 'mid' | 'damage' | 'cause_of_loss' | 'water_line'
+  | 'moisture_reading' | 'equipment' | 'contents' | 'demo' | 'completion' | 'other';
+
 export interface Org { id: string; name: string; plan: string; status: string; }
 
 export interface OrgMembership { org_id: string; user_id: string; role: Role; }
@@ -16,15 +41,15 @@ export interface Claim {
   address: string | null;
   lat: number | null;
   lng: number | null;
-  carrier_identifier: string | null;
+  carrier_identifier: string | null;      // Xactimate "Claim Number"
   contractor_identifier: string | null;
-  assignment_identifier: string | null;
+  assignment_identifier: string | null;   // Xactimate "Adj. File Number"
   date_of_loss: string | null;
   date_created: string | null;
   insurance_company: string | null;
   broker_agent: string | null;
   project_manager: string | null;
-  adjuster: string | null;
+  adjuster: string | null;                // Xactimate "Claim Rep"
   policy_number: string | null;
   type_of_loss: TypeOfLoss | null;
   category_of_water: number | null;
@@ -32,6 +57,26 @@ export interface Claim {
   cat_code: string | null;
   status: string;
   created_at: string;
+
+  // ---- Cause & Origin ----
+  cause_of_loss: string | null;      // narrower than type_of_loss (Xactimate Cause of Loss)
+  loss_onset: LossOnset | null;      // sudden vs gradual, the #1 denial argument
+  date_discovered: string | null;    // when it was FOUND (vs date_of_loss = when it happened)
+  cause_notes: string | null;
+
+  // ---- Xactimate claim dates (required to complete an estimate) ----
+  date_contacted: string | null;
+  date_inspected: string | null;
+  date_received: string | null;
+
+  // ---- Policy & coverage ----
+  policy_type: PolicyType | null;
+  policy_effective_date: string | null;
+  policy_expiration_date: string | null;
+  deductible: number | null;
+  deductible_applies: DeductibleApplies | null;
+  coverages: Coverage[];             // jsonb, defaults to []
+  estimator: string | null;          // Xactimate required field alongside the claim rep
 }
 
 export interface Structure {
