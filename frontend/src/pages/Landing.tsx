@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Droplet, Flame, Sprout, ShieldCheck, Camera, Ruler, FileText, PenLine,
-  Wind, Check, ArrowRight, Zap, WifiOff
+  Wind, Check, ArrowRight, Zap, WifiOff, MailCheck
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 // Landing + signup in one. Marketing scroll page (no app shell / bottom nav).
+// The document itself is locked from scrolling (index.css: html,body overflow
+// hidden for the PWA shell), so this page owns its own vertical scroll via the
+// root container, exactly like the app's <main>.
 // Design matches the app: Bricolage Grotesque display, navy/sky gradients, soft cards.
 export default function Landing() {
   const nav = useNavigate();
@@ -14,49 +17,71 @@ export default function Landing() {
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null); // set when the project requires email confirmation
 
   async function signUp() {
-    if (!email || !password) { setErr('Enter an email and password.'); return; }
+    const mail = email.trim();
+    if (!mail || !password) { setErr('Enter an email and password.'); return; }
+    if (password.length < 6) { setErr('Use at least 6 characters for your password.'); return; }
     setBusy(true); setErr(null);
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email: mail, password,
+      options: { emailRedirectTo: `${window.location.origin}/login` }
+    });
     setBusy(false);
-    if (error) setErr(error.message);
-    else nav('/'); // ProtectedRoute -> CreateOrg when there's no workspace yet
+    if (error) { setErr(error.message); return; }
+    // If the project requires email confirmation, signUp returns no session.
+    // Navigating to '/' here would bounce the user to /login and read as a
+    // broken signup, so show a confirm-your-email state instead. When
+    // confirmation is off, data.session is present and we go straight in.
+    if (!data.session) { setSentTo(mail); return; }
+    nav('/'); // has a session -> ProtectedRoute sends them to CreateOrg
   }
 
   const scrollToSignup = () => document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth' });
 
-  const SignupForm = ({ compact = false }: { compact?: boolean }) => (
-    <div className={compact ? '' : 'card !p-5 sm:!p-6'}>
-      {err && <p className="text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl px-3 py-2 mb-3">{err}</p>}
-      <div className="space-y-2.5">
-        <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 text-[16px] focus:outline-none focus:border-sky bg-white"
-          placeholder="Work email" type="email" autoComplete="email" inputMode="email"
-          value={email} onChange={(e) => setEmail(e.target.value)} />
-        <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 text-[16px] focus:outline-none focus:border-sky bg-white"
-          placeholder="Create a password" type="password" autoComplete="new-password"
-          value={password} onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') signUp(); }} />
-        <button onClick={signUp} disabled={busy}
-          className="w-full bg-gradient-to-br from-sky to-sky-deep text-white rounded-xl py-3.5 font-bold shadow-sky active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2">
-          {busy ? 'Creating your workspace…' : <>Start free <ArrowRight size={18} /></>}
-        </button>
-      </div>
-      <p className="text-[11px] text-gray-400 mt-2.5 text-center">No credit card. No hardware. Works on any device.</p>
+  // NOTE: the signup form is inlined (not a nested <SignupForm/> component). A
+  // nested component gets a new function identity on every keystroke-driven
+  // re-render, which remounts the inputs and drops focus. Inlining keeps focus.
+  const signupCard = (
+    <div className="card !p-5 sm:!p-6">
+      {sentTo ? (
+        <div className="text-center py-2">
+          <div className="w-11 h-11 rounded-2xl bg-sky-soft text-sky-deep flex items-center justify-center mx-auto mb-3"><MailCheck size={22} /></div>
+          <div className="font-bold text-[15px]">Confirm your email</div>
+          <p className="text-[13px] text-gray-500 mt-1">We sent a link to <span className="font-semibold text-navy">{sentTo}</span>. Click it to finish setting up your workspace.</p>
+          <Link to="/login" className="inline-block text-sky-deep font-semibold text-sm mt-3">Go to sign in</Link>
+        </div>
+      ) : (
+        <>
+          {err && <p className="text-red-600 text-sm bg-red-50 border border-red-100 rounded-xl px-3 py-2 mb-3">{err}</p>}
+          <div className="space-y-2.5">
+            <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 text-[16px] focus:outline-none focus:border-sky bg-white"
+              placeholder="Work email" type="email" autoComplete="email" inputMode="email"
+              value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input className="w-full border border-gray-200 rounded-xl px-3.5 py-3 text-[16px] focus:outline-none focus:border-sky bg-white"
+              placeholder="Create a password" type="password" autoComplete="new-password"
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') signUp(); }} />
+            <button onClick={signUp} disabled={busy}
+              className="w-full bg-gradient-to-br from-sky to-sky-deep text-white rounded-xl py-3.5 font-bold shadow-sky active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2">
+              {busy ? 'Creating your workspace…' : <>Start free <ArrowRight size={18} /></>}
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-400 mt-2.5 text-center">No credit card. No hardware. Works on any device.</p>
+        </>
+      )}
     </div>
   );
 
   return (
-    <div className="min-h-[100dvh] bg-white text-navy">
+    <div className="h-[100dvh] overflow-y-auto bg-white text-navy">
       {/* nav */}
       <header className="sticky top-0 z-20 bg-white/85 backdrop-blur border-b border-gray-100">
         <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky to-sky-deep flex items-center justify-center shadow-soft">
-              <Droplet size={17} className="text-white" />
-            </div>
-            <span className="font-display font-bold text-[16px]">DocuMate</span>
-          </div>
+          <Link to="/welcome" className="flex items-center">
+            <img src="/documate-logo.svg" alt="DocuMate" className="h-7 w-auto" />
+          </Link>
           <div className="flex items-center gap-4 text-sm">
             <Link to="/login" className="font-semibold text-gray-500 hover:text-navy">Sign in</Link>
             <button onClick={scrollToSignup} className="hidden sm:inline-flex bg-navy text-white font-semibold rounded-lg px-4 py-2 hover:bg-navy-soft transition">Start free</button>
@@ -76,15 +101,15 @@ export default function Landing() {
               Get paid in full.<br /><span className="text-sky-deep">Without the scrub.</span>
             </h1>
             <p className="text-[16px] text-gray-500 mt-4 leading-relaxed max-w-md">
-              The field documentation and insurance‑claim tool for restoration crews. Capture the job on‑site, prove it to the carrier, and stop losing margin to estimate scrubbing.
+              DocuMate turns your on‑site documentation into a carrier‑ready claim package built to survive the adjuster's scrub. Capture the job once, prove every line, and keep the margin you earned.
             </p>
             <div id="signup" className="mt-6 max-w-sm scroll-mt-20">
-              <SignupForm />
+              {signupCard}
             </div>
             <p className="text-sm text-gray-400 mt-3">Already have an account? <Link to="/login" className="text-sky-deep font-semibold">Sign in</Link></p>
           </div>
 
-          {/* product preview — the Claim Readiness differentiator, in a phone frame */}
+          {/* product preview: the Claim Readiness differentiator, in a phone frame */}
           <div className="relative mx-auto w-[300px]">
             <div className="rounded-[2.2rem] bg-navy p-2.5 shadow-[0_30px_80px_rgba(14,42,77,0.28)]">
               <div className="rounded-[1.8rem] bg-[#EDF1F6] overflow-hidden">
@@ -132,13 +157,13 @@ export default function Landing() {
       <section className="bg-navy text-white">
         <div className="max-w-6xl mx-auto px-5 py-14">
           <p className="font-display font-bold text-[24px] sm:text-[30px] leading-tight max-w-3xl">
-            Roughly 80% of restoration work is insurance‑funded, and the single biggest margin leak is the <span className="text-aqua">estimate scrub</span>.
+            Restoration runs on insurance money. The fastest way to lose it is handing the adjuster a claim they can <span className="text-aqua">scrub</span>.
           </p>
           <div className="grid sm:grid-cols-3 gap-6 mt-9">
             {[
-              ['Missing readings', 'Skipped days and thin drying logs get flagged and cut.'],
-              ['Weak photo proof', 'No timestamps, no GPS, no defensible record of the loss.'],
-              ['Hours of transcription', 'Paper logs and per‑project software fees eat the crew’s time.']
+              ['Thin drying logs', 'Skipped monitoring days and missing readings get flagged and cut from the invoice.'],
+              ['Weak photo proof', 'No timestamps, no GPS, nothing that pins the loss to a time and a place.'],
+              ['Hours lost to paperwork', 'Paper logs and per‑project software fees bleed the crew’s time and your margin.']
             ].map(([t, d]) => (
               <div key={t}>
                 <div className="font-bold text-[15px]">{t}</div>
@@ -155,9 +180,9 @@ export default function Landing() {
         <p className="text-gray-500 text-center mt-2 max-w-lg mx-auto">The whole job, from the first photo on‑site to the carrier‑ready package, on one device.</p>
         <div className="grid md:grid-cols-3 gap-4 mt-10">
           {[
-            [Camera, 'Capture in the field', 'Photos with time + GPS, moisture maps, drying readings, contents, and e‑signatures, offline‑ready.'],
-            [ShieldCheck, 'Prove it before you send', 'The Claim Readiness audit predicts what an adjuster will challenge and shows you exactly what to fix.'],
-            [FileText, 'Get the carrier‑ready package', 'A branded report and daily drying log, shareable by clean link, that survives the scrub.']
+            [Camera, 'Capture in the field', 'Photos stamped with time and GPS, moisture maps, drying readings, contents, and e‑signatures. Offline‑ready.'],
+            [ShieldCheck, 'Prove it before you send', 'The Claim Readiness audit predicts what the adjuster will challenge and shows you exactly what to fix first.'],
+            [FileText, 'Hand over the package', 'A branded report and daily drying log, shareable by clean link, that holds up line by line under the scrub.']
           ].map(([Icon, t, d], i) => (
             <div key={i} className="card !p-5">
               <div className="w-11 h-11 rounded-2xl bg-sky-soft text-sky-deep flex items-center justify-center mb-3"><Icon size={20} /></div>
@@ -175,7 +200,7 @@ export default function Landing() {
             <div className="inline-flex items-center gap-1.5 text-[12px] font-bold text-sky-deep bg-white rounded-full px-3 py-1.5 mb-4 shadow-soft"><ShieldCheck size={13} /> Claim Defense</div>
             <h2 className="font-display font-extrabold text-[28px] sm:text-[32px] leading-tight">The audit the adjuster runs, run on yourself first.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Before a package goes out, DocuMate scores the claim and flags the gaps carriers scrub on, missing daily readings, unsigned authorizations, thin monitoring, equipment that doesn’t match the S500 calc. Fix it before you submit, not after you’re shorted.
+              Before a package goes out, DocuMate scores the claim and flags the gaps carriers scrub on: missing daily readings, unsigned authorizations, thin monitoring, equipment that doesn’t match the S500 calc. You fix it before you submit, not after you’re shorted.
             </p>
             <ul className="mt-5 space-y-2.5">
               {['S500‑aligned drying guardrails', 'Timestamped, GPS‑stamped photo proof', 'Equipment‑days that defend the invoice', 'Nothing auto‑submits, you review everything'].map((f) => (
@@ -187,7 +212,7 @@ export default function Landing() {
             {[
               [Ruler, 'Moisture mapping', 'Paint wet areas, place equipment, mark flood cuts and containment.'],
               [Wind, 'Drying & S500', 'Psychrometrics, chambers, and a daily drying log that auto‑fills GPP.'],
-              [Camera, 'Photos & contents', 'Room‑grouped, stamped photos and salvageable‑vs‑loss inventory.'],
+              [Camera, 'Photos & contents', 'Room‑grouped, stamped photos and a salvageable‑vs‑loss inventory.'],
               [PenLine, 'E‑signatures', 'Work authorizations and completion certificates signed on‑site.']
             ].map(([Icon, t, d], i) => (
               <div key={i} className="card !p-4">
@@ -222,15 +247,12 @@ export default function Landing() {
       {/* footer */}
       <footer className="border-t border-gray-100">
         <div className="max-w-6xl mx-auto px-5 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-gray-400">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-sky to-sky-deep flex items-center justify-center"><Droplet size={13} className="text-white" /></div>
-            <span className="font-display font-bold text-navy">DocuMate</span>
-          </div>
+          <img src="/documate-logo.svg" alt="DocuMate" className="h-6 w-auto" />
           <div className="flex items-center gap-5">
             <Link to="/login" className="hover:text-navy">Sign in</Link>
             <button onClick={scrollToSignup} className="hover:text-navy">Start free</button>
           </div>
-          <span>&copy; {new Date().getFullYear()} Reliable Solutions</span>
+          <span>&copy; {new Date().getFullYear()} DocuMate</span>
         </div>
       </footer>
     </div>
