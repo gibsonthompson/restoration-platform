@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 import { useAuth } from '../../context/AuthContext';
+import { InstallCard } from '../../components/InstallPrompt';
 
 // Legible text color for a brand background (white on dark, navy on light).
 function contrastText(hex: string) {
@@ -109,6 +110,9 @@ export default function OrgSettings() {
   return (
     <div className="p-4 space-y-4 pb-24">
       <h1 className="font-display text-lg font-bold text-navy">Settings</h1>
+
+      {/* Add to Home Screen (renders nothing once installed) */}
+      <InstallCard />
 
       {/* live report-header preview */}
       <div>

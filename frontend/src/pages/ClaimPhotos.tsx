@@ -1,21 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Image as ImageIcon, X, MapPin, ChevronLeft as Prev, ChevronRight as Next } from 'lucide-react';
+import { ChevronLeft, Image as ImageIcon, X, MapPin, ChevronLeft as Prev, ChevronRight as Next, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { signedUrl } from '../lib/storage';
 import { Loader } from '../components/Loader';
+import { PhotoGuide } from '../components/PhotoGuide';
+import { MIN_PHOTOS_PER_ROOM } from '../lib/claimReadiness';
 
 interface Media {
   id: string; storage_path: string; caption: string | null;
   captured_at: string | null; lat: number | null; lng: number | null; room_id: string | null;
 }
-interface Room { id: string; name: string | null }
+interface Room { id: string; name: string | null; structure_id?: string }
 
 export default function ClaimPhotos() {
   const { claimId } = useParams();
   const nav = useNavigate();
   const [photos, setPhotos] = useState<Media[]>([]);
   const [rooms, setRooms] = useState<Record<string, string>>({});
+  const [allRooms, setAllRooms] = useState<Room[]>([]);   // every room on the claim, so gaps are visible
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [viewIdx, setViewIdx] = useState<number | null>(null);
@@ -28,27 +31,36 @@ export default function ClaimPhotos() {
         .eq('claim_id', claimId).eq('type', 'photo').order('captured_at', { ascending: false });
       const rows = (data as Media[]) ?? [];
       setPhotos(rows);
-      const roomIds = [...new Set(rows.map(r => r.room_id).filter(Boolean))];
-      if (roomIds.length) {
-        const { data: rm } = await supabase.from('resto_rooms').select('id, name').in('id', roomIds as string[]);
-        const map: Record<string, string> = {};
-        (rm as Room[] ?? []).forEach(r => { map[r.id] = r.name || 'Room'; });
-        setRooms(map);
+
+      // Every room on the claim, not just the ones that already have photos. A room
+      // with zero photos is the gap an adjuster finds, so it has to be visible here.
+      const { data: structs } = await supabase.from('resto_structures').select('id').eq('claim_id', claimId);
+      const structIds = ((structs as { id: string }[]) ?? []).map(s => s.id);
+      let claimRooms: Room[] = [];
+      if (structIds.length) {
+        const { data: rm } = await supabase.from('resto_rooms')
+          .select('id, name, structure_id').in('structure_id', structIds).order('sort_order');
+        claimRooms = (rm as Room[]) ?? [];
       }
+      setAllRooms(claimRooms);
+      const map: Record<string, string> = {};
+      claimRooms.forEach(r => { map[r.id] = r.name || 'Room'; });
+      setRooms(map);
+
       const entries = await Promise.all(rows.map(async r => [r.id, await signedUrl(r.storage_path)] as const));
       setUrls(Object.fromEntries(entries.filter(([, u]) => u)) as Record<string, string>);
       setLoading(false);
     })();
   }, [claimId]);
 
-  // group by room, preserving recency order of rooms
-  const byRoom: { roomId: string; label: string; items: Media[] }[] = [];
-  const seen: Record<string, number> = {};
-  for (const p of photos) {
-    const key = p.room_id ?? 'none';
-    if (seen[key] == null) { seen[key] = byRoom.length; byRoom.push({ roomId: key, label: p.room_id ? (rooms[p.room_id] ?? 'Room') : 'Unassigned', items: [] }); }
-    byRoom[seen[key]].items.push(p);
-  }
+  // Group by room. Start from ALL rooms (so empty ones show), then append any
+  // photos whose room was deleted or never set, under "Unassigned".
+  const byRoom: { roomId: string; label: string; items: Media[] }[] =
+    allRooms.map(r => ({ roomId: r.id, label: r.name || 'Room', items: photos.filter(p => p.room_id === r.id) }));
+  const orphans = photos.filter(p => !p.room_id || !rooms[p.room_id]);
+  if (orphans.length) byRoom.push({ roomId: 'none', label: 'Unassigned', items: orphans });
+
+  const thinRooms = allRooms.filter(r => photos.filter(p => p.room_id === r.id).length < MIN_PHOTOS_PER_ROOM).length;
 
   const stamp = (p: Media) => {
     const parts: string[] = [];
@@ -70,27 +82,59 @@ export default function ClaimPhotos() {
         <div className="opacity-75 text-[13px] font-medium mt-0.5">{photos.length} photo{photos.length === 1 ? '' : 's'} across the job</div>
       </div>
 
-      <div className="px-4 mt-4 space-y-5">
-        {photos.length === 0 && (
-          <p className="text-gray-400 text-sm">No photos yet. Open a room and capture photos, they'll gather here as the job's visual record.</p>
-        )}
+      <div className="px-4 mt-4 space-y-4">
+        <PhotoGuide />
 
-        {byRoom.map(group => (
-          <div key={group.roomId}>
-            <div className="text-[12px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-2">{group.label} · {group.items.length}</div>
-            <div className="grid grid-cols-3 gap-1.5">
-              {group.items.map(p => {
-                const gi = photos.indexOf(p);
-                return (
-                  <button key={p.id} onClick={() => setViewIdx(gi)} className="relative aspect-square rounded-xl overflow-hidden bg-gray-100 active:scale-[.98] transition">
-                    {urls[p.id] ? <img src={urls[p.id]} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><ImageIcon size={18} className="text-gray-300" /></div>}
-                    {p.lat != null && p.lng != null && <span className="absolute bottom-1 right-1 bg-navy/70 text-white rounded-md p-0.5"><MapPin size={9} /></span>}
-                  </button>
-                );
-              })}
+        {allRooms.length > 0 && thinRooms > 0 && (
+          <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-2xl px-3.5 py-3">
+            <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-[12px] text-amber-800 leading-relaxed">
+              <span className="font-bold">{thinRooms} room{thinRooms === 1 ? '' : 's'}</span> {thinRooms === 1 ? 'has' : 'have'} fewer than {MIN_PHOTOS_PER_ROOM} photos. Each affected room needs at least a wide, a mid-range, and a close-up shot before an adjuster can follow what you are billing.
             </div>
           </div>
-        ))}
+        )}
+
+        {photos.length === 0 && allRooms.length === 0 && (
+          <p className="text-gray-400 text-sm">No photos yet. Open a room and capture photos, they'll gather here as the job's visual record.</p>
+        )}
+      </div>
+
+      <div className="px-4 mt-5 space-y-5">
+        {byRoom.map(group => {
+          const thin = group.roomId !== 'none' && group.items.length < MIN_PHOTOS_PER_ROOM;
+          return (
+            <div key={group.roomId}>
+              <div className="flex items-center gap-2 px-1 mb-2">
+                <div className="text-[12px] font-bold text-gray-400 uppercase tracking-wider">{group.label} · {group.items.length}</div>
+                {thin && (
+                  <span className="chip bg-amber-100 text-amber-700">
+                    {group.items.length === 0 ? 'No photos' : `Needs ${MIN_PHOTOS_PER_ROOM - group.items.length} more`}
+                  </span>
+                )}
+              </div>
+              {group.items.length === 0 ? (
+                <div className="border border-dashed border-gray-200 rounded-2xl px-4 py-5 text-center">
+                  <ImageIcon size={18} className="text-gray-300 mx-auto mb-1.5" />
+                  <p className="text-[12px] text-gray-400 leading-relaxed">
+                    Nothing captured here yet. Start with four wide shots, one from each corner.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {group.items.map(p => {
+                    const gi = photos.indexOf(p);
+                    return (
+                      <button key={p.id} onClick={() => setViewIdx(gi)} className="relative aspect-square rounded-xl overflow-hidden bg-gray-100 active:scale-[.98] transition">
+                        {urls[p.id] ? <img src={urls[p.id]} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><ImageIcon size={18} className="text-gray-300" /></div>}
+                        {p.lat != null && p.lng != null && <span className="absolute bottom-1 right-1 bg-navy/70 text-white rounded-md p-0.5"><MapPin size={9} /></span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {view && (

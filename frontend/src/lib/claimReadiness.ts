@@ -1,11 +1,17 @@
 // ============================================================================
-// Claim Readiness engine — the pre-submission "scrub-proof" audit.
+// Claim Readiness engine, the pre-submission "scrub-proof" audit.
 // Pure, deterministic rules over data we already capture. No AI, no network.
 // Predicts what an adjuster will challenge before the package is sent.
 // Relevance-aware: drying checks only apply when the claim has drying chambers.
 // ============================================================================
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
+
+// The wide / mid / close trio: an adjuster needs context, placement, and detail
+// before they can follow what you are billing in a room. This is the FLOOR, not
+// the target. Defined here (the scoring engine) so the in-app photo guidance and
+// the score can never drift apart.
+export const MIN_PHOTOS_PER_ROOM = 3;
 
 export interface ReadinessCheck {
   id: string;
@@ -75,14 +81,30 @@ export function computeReadiness(input: ReadinessInput): ReadinessResult {
     to: `/claims/${input.claimId}`
   });
 
-  // 3) Photo documentation, per affected room
+  // 3) Photo documentation, per affected room.
+  // Counting photos per room, not just claim-wide: a room with a single photo used
+  // to score a clean pass, which is exactly the gap an adjuster finds. An affected
+  // room needs at least the wide / mid / close trio before the scope is followable.
   {
-    const roomsWithPhotos = new Set(photos.map((p) => p.room_id).filter(Boolean));
-    const roomsMissing = rooms.filter((r) => !roomsWithPhotos.has(r.id)).length;
+    const countByRoom = new Map<string, number>();
+    for (const p of photos) if (p.room_id) countByRoom.set(p.room_id, (countByRoom.get(p.room_id) || 0) + 1);
+    const noPhotos = rooms.filter((r) => !countByRoom.get(r.id)).length;
+    const thin = rooms.filter((r) => {
+      const n = countByRoom.get(r.id) || 0;
+      return n > 0 && n < MIN_PHOTOS_PER_ROOM;
+    }).length;
+
+    let detail: string;
+    if (photos.length === 0) detail = 'No photos captured.';
+    else if (noPhotos > 0 && thin > 0) detail = `${noPhotos} room${noPhotos === 1 ? '' : 's'} with no photos, ${thin} with fewer than ${MIN_PHOTOS_PER_ROOM}.`;
+    else if (noPhotos > 0) detail = `${noPhotos} room${noPhotos === 1 ? '' : 's'} have no photos.`;
+    else if (thin > 0) detail = `${thin} room${thin === 1 ? '' : 's'} have fewer than ${MIN_PHOTOS_PER_ROOM} photos (wide, mid, close).`;
+    else detail = `${photos.length} photos across all rooms.`;
+
     checks.push({
       id: 'photos', label: 'Photo documentation',
-      status: photos.length === 0 ? 'fail' : roomsMissing > 0 ? 'warn' : 'pass',
-      detail: photos.length === 0 ? 'No photos captured.' : roomsMissing > 0 ? `${roomsMissing} room${roomsMissing === 1 ? '' : 's'} have no photos.` : `${photos.length} photos across all rooms.`,
+      status: photos.length === 0 ? 'fail' : (noPhotos > 0 || thin > 0) ? 'warn' : 'pass',
+      detail,
       to: `/claims/${input.claimId}/photos`
     });
   }
