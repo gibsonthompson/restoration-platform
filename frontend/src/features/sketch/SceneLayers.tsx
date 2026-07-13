@@ -13,11 +13,11 @@ function FloodCutBand({ scene, fc }: { scene: Scene; fc: FloodCut }) {
   const B: Pt = [ends.end[0] + nrm[0] * off, ends.end[1] + nrm[1] * off];
   const mid: Pt = [(A[0] + B[0]) / 2 + nrm[0] * 12, (A[1] + B[1]) / 2 + nrm[1] * 12];
   const lf = Math.round(lenU / UNITS_PER_FT);
-  const ht = fc.heightFt < 1 ? '4″' : `${fc.heightFt}′`;
+  const ht = fc.heightFt < 1 ? '4\u2033' : `${fc.heightFt}\u2032`;
   return (
     <g>
       <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#F59E0B" strokeWidth={7} strokeLinecap="round" strokeDasharray="2 7" opacity={0.95} />
-      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} linear ft · {ht} cut</text>
+      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} linear ft &middot; {ht} cut</text>
     </g>
   );
 }
@@ -70,7 +70,7 @@ function EquipGlyph({ eq, selected }: { eq: Equip; selected?: boolean }) {
   );
 }
 
-// Double-line mitered wall band (no fill — the floor fill is a separate layer
+// Double-line mitered wall band (no fill: the floor fill is a separate layer
 // drawn beneath the wet areas). Matches resto-map-svg.js at 2x scene scale.
 const WALL_W = 18, WALL_LW = 3.2;
 function WallBand({ w }: { w: Poly }) {
@@ -113,6 +113,13 @@ function PointGlyph({ mp, display, selected }: { mp: MoisturePoint; display: str
   );
 }
 
+// Doors / windows / cased openings / MISSING WALLS on a wall edge.
+//
+// A MISSING WALL is Xactimate's own concept: an open archway between two rooms.
+// There is no wall there at all, so it gets NO JAMB LINES: jambs would imply a
+// cased opening, which is a different thing and a different quantity. It is marked
+// with a dashed line showing the absence, deducts full ceiling height from wall
+// area, and leaves no baseboard.
 function OpeningGlyph({ scene, op, selected }: { scene: Scene; op: Opening; selected?: boolean }) {
   const w = wallById(scene, op.wallId); if (!w) return null;
   const { A, B, dir, nrm, center, gapLen } = openingGeom(w, op);
@@ -123,13 +130,19 @@ function OpeningGlyph({ scene, op, selected }: { scene: Scene; op: Opening; sele
   const jB1 = off(B, -WALL_W / 2), jB2 = off(B, WALL_W / 2);
   const openEnd: Pt = [A[0] + nrm[0] * gapLen, A[1] + nrm[1] * gapLen];
   const sweep = (dir[0] * nrm[1] - dir[1] * nrm[0]) > 0 ? 1 : 0;
+  const isMissing = op.kind === 'missing_wall';
   return (
     <g>
       {/* knock the wall out of the gap: floor continues inside, white outside */}
       <polygon points={`${A[0]},${A[1]} ${B[0]},${B[1]} ${innerB[0]},${innerB[1]} ${inner[0]},${inner[1]}`} fill="#f4f7fb" />
       <polygon points={`${A[0]},${A[1]} ${B[0]},${B[1]} ${outerB[0]},${outerB[1]} ${outer[0]},${outer[1]}`} fill="#ffffff" />
-      <line x1={jA1[0]} y1={jA1[1]} x2={jA2[0]} y2={jA2[1]} stroke="#0E2A4D" strokeWidth={WALL_LW} strokeLinecap="round" />
-      <line x1={jB1[0]} y1={jB1[1]} x2={jB2[0]} y2={jB2[1]} stroke="#0E2A4D" strokeWidth={WALL_LW} strokeLinecap="round" />
+      {/* a missing wall has no wall, therefore no jambs */}
+      {!isMissing && (
+        <>
+          <line x1={jA1[0]} y1={jA1[1]} x2={jA2[0]} y2={jA2[1]} stroke="#0E2A4D" strokeWidth={WALL_LW} strokeLinecap="round" />
+          <line x1={jB1[0]} y1={jB1[1]} x2={jB2[0]} y2={jB2[1]} stroke="#0E2A4D" strokeWidth={WALL_LW} strokeLinecap="round" />
+        </>
+      )}
       {op.kind === 'door' && (
         <>
           <path d={`M ${B[0]} ${B[1]} A ${gapLen} ${gapLen} 0 0 ${sweep} ${openEnd[0]} ${openEnd[1]}`} fill="none" stroke="#94a3b8" strokeWidth={2.5} />
@@ -137,6 +150,13 @@ function OpeningGlyph({ scene, op, selected }: { scene: Scene; op: Opening; sele
         </>
       )}
       {op.kind === 'window' && <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#0E2A4D" strokeWidth={2.5} />}
+      {isMissing && (
+        <>
+          <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#94a3b8" strokeWidth={2.5} strokeDasharray="6 6" />
+          <text x={center[0] + nrm[0] * 20} y={center[1] + nrm[1] * 20} textAnchor="middle" dominantBaseline="central"
+                fontSize={11} fontWeight={700} fill="#94a3b8" stroke="#fff" strokeWidth={3} paintOrder="stroke">missing wall</text>
+        </>
+      )}
       {selected && <circle cx={center[0]} cy={center[1]} r={13} fill="none" stroke="#0E2A4D" strokeWidth={2.5} />}
     </g>
   );
@@ -157,7 +177,7 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
         const strokes = p.strokes ?? (p.points.length ? [p.points] : []);
         const allPts = strokes.flat();
         const c = polygonCentroid(allPts.length ? allPts : p.points);
-        const lbl = p.material ? (p.surface && p.surface !== 'floor' ? `${p.surface[0].toUpperCase()}${p.surface.slice(1)} · ${p.material}` : p.material) : null;
+        const lbl = p.material ? (p.surface && p.surface !== 'floor' ? `${p.surface[0].toUpperCase()}${p.surface.slice(1)} \u00b7 ${p.material}` : p.material) : null;
         return (
           <g key={p.id}>
             {p.brush

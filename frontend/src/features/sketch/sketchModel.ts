@@ -11,8 +11,18 @@ export interface FloodCut { wallId: string; edge: number; heightFt: number; leng
 export interface Containment { id: string; heightFt: number; x?: number; y?: number; widthFt?: number; label?: string; from?: Pt; to?: Pt; }   // PLASTIC barrier: width x height (tap-placed); from/to legacy
 export interface Equip { id: string; type: EquipType; x: number; y: number; }
 export interface Arrow { id: string; from: Pt; to: Pt; }   // water migration direction (S500)
-export type OpeningKind = 'door' | 'opening' | 'window';
-export interface Opening { id: string; wallId: string; edge: number; t: number; widthFt: number; kind: OpeningKind; }
+
+// 'missing_wall' is Xactimate's own concept: an open archway between two rooms. It is
+// not a door in a wall, it is the ABSENCE of wall, so it deducts full ceiling height
+// from wall area and leaves no baseboard.
+export type OpeningKind = 'door' | 'opening' | 'window' | 'missing_wall';
+
+// heightFt is a MEASUREMENT, and it must be captured, not invented. Wall area is
+//   W = (perimeter x ceiling height) - SUM(opening width x opening HEIGHT)
+// so an assumed height is an assumed dollar amount on a paint or drywall line. It is
+// optional only so that sketches drawn before this existed still parse; anything
+// consuming it treats a missing height as an ASSUMPTION and says so out loud.
+export interface Opening { id: string; wallId: string; edge: number; t: number; widthFt: number; heightFt?: number; kind: OpeningKind; }
 export interface Reading { date: string; value: string; }   // date 'YYYY-MM-DD' ('' = undated legacy)
 export interface MoisturePoint { id: string; x: number; y: number; label?: string; material?: string; readings?: Reading[]; }
 
@@ -22,7 +32,7 @@ export interface Scene {
   equipment: Equip[];
   moisturePoints?: MoisturePoint[];
   arrows?: Arrow[];          // water migration arrows
-  openings?: Opening[];      // doors / cased openings / windows on wall edges
+  openings?: Opening[];      // doors / cased openings / windows / missing walls on wall edges
   classOfLoss?: number;      // IICRC S500 class 1-4 (drives equipment suggestion)
   floodCuts?: FloodCut[];
   containments?: Containment[];
@@ -174,8 +184,44 @@ export function hitArrow(scene: Scene, x: number, y: number, r = 26): Arrow | nu
   return null;
 }
 
-// ---- openings (doors / windows / cased openings on wall edges) ----
-export const OPENING_DEFAULT_FT: Record<OpeningKind, number> = { door: 3, opening: 4, window: 3 };
+// ---- openings (doors / windows / cased openings / missing walls on wall edges) ----
+export const OPENING_DEFAULT_FT: Record<OpeningKind, number> = { door: 3, opening: 4, window: 3, missing_wall: 6 };
+
+// STANDARD heights, in feet. These are used ONLY as the starting value in the capture
+// sheet, never as a silent substitute for a measurement. missing_wall is null because
+// a missing wall is full ceiling height by definition.
+//   door   6' 8"  (the standard interior door)
+//   window 4' 0"
+//   opening 6' 8" (cased opening / archway)
+export const OPENING_DEFAULT_HEIGHT_FT: Record<OpeningKind, number | null> = {
+  door: 6 + 8 / 12,
+  window: 4,
+  opening: 6 + 8 / 12,
+  missing_wall: null
+};
+
+// Openings you can walk through interrupt baseboard. A WINDOW does not, because
+// baseboard runs underneath it.
+export const OPENING_BREAKS_BASEBOARD: Record<OpeningKind, boolean> = {
+  door: true, opening: true, missing_wall: true, window: false
+};
+
+export const OPENING_LABEL: Record<OpeningKind, string> = {
+  door: 'Door', window: 'Window', opening: 'Cased opening', missing_wall: 'Missing wall'
+};
+
+// Resolve an opening's height. A missing wall is always full ceiling height. Anything
+// else uses the MEASURED height, and only falls back to a standard size when nothing
+// was captured. Returns the flag so a caller can tell the user the number is assumed.
+export function openingHeightFt(op: Opening, ceilingHeightFt: number): { heightFt: number; assumed: boolean } {
+  if (op.kind === 'missing_wall') return { heightFt: ceilingHeightFt, assumed: false };
+  if (op.heightFt != null && op.heightFt > 0) {
+    return { heightFt: Math.min(op.heightFt, ceilingHeightFt), assumed: false };
+  }
+  const def = OPENING_DEFAULT_HEIGHT_FT[op.kind] ?? ceilingHeightFt;
+  return { heightFt: Math.min(def, ceilingHeightFt), assumed: true };
+}
+
 export function wallById(scene: Scene, id: string): Poly | undefined { return scene.walls.find(w => w.id === id); }
 export function edgePts(wall: Poly, edge: number): [Pt, Pt] {
   const n = wall.points.length; return [wall.points[edge], wall.points[(edge + 1) % n]];
