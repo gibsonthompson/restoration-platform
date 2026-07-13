@@ -11,7 +11,7 @@ interface Media {
   id: string; storage_path: string; caption: string | null;
   captured_at: string | null; lat: number | null; lng: number | null; room_id: string | null;
 }
-interface Room { id: string; name: string | null; structure_id?: string }
+interface Room { id: string; name: string | null; structure_id?: string; affected?: boolean | null }
 
 export default function ClaimPhotos() {
   const { claimId } = useParams();
@@ -39,8 +39,11 @@ export default function ClaimPhotos() {
       let claimRooms: Room[] = [];
       if (structIds.length) {
         const { data: rm } = await supabase.from('resto_rooms')
-          .select('id, name, structure_id').in('structure_id', structIds).order('sort_order');
-        claimRooms = (rm as Room[]) ?? [];
+          .select('id, name, structure_id, affected').in('structure_id', structIds).order('sort_order');
+        // Only AFFECTED rooms need photo coverage. A hallway drawn on the floor plan
+        // for context carries doors and shows the flow of the building; it is not part
+        // of the loss, and flagging it for "no photos" would be a gap we invented.
+        claimRooms = ((rm as Room[]) ?? []).filter(r => r.affected !== false);
       }
       setAllRooms(claimRooms);
       const map: Record<string, string> = {};

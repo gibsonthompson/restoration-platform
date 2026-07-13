@@ -41,8 +41,11 @@ export default function ScopePage() {
 
     let roomIds: string[] = [];
     if (structIds.length) {
-      const { data: rm } = await supabase.from('resto_rooms').select('id').in('structure_id', structIds);
-      roomIds = ((rm as { id: string }[]) ?? []).map(r => r.id);
+      const { data: rm } = await supabase.from('resto_rooms').select('id, affected').in('structure_id', structIds);
+      // Context-only spaces (a hallway added on the floor plan) are not scoped, so
+      // the scope must not demand a moisture map or photos for them.
+      roomIds = ((rm as { id: string; affected?: boolean | null }[]) ?? [])
+        .filter(r => r.affected !== false).map(r => r.id);
     }
 
     const [sketches, notes, photos, chambers] = await Promise.all([

@@ -44,9 +44,19 @@ export interface ReadinessInput {
 const dayKey = (d: string | null) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 
 export function computeReadiness(input: ReadinessInput): ReadinessResult {
-  const { claim, rooms, photos, sketches, chambers, readings, equipment, signatures } = input;
+  const { claim, photos, sketches, chambers, readings, equipment, signatures } = input;
   const checks: ReadinessCheck[] = [];
   const hasChambers = chambers.length > 0;
+
+  // Only AFFECTED rooms are scored. A hallway drawn on the floor plan so the plan
+  // reads correctly (it carries doors, it shows how the building connects) is
+  // structural context, not part of the loss. Counting it would manufacture gaps
+  // that do not exist: "no photos", "no moisture map", "thin coverage", all on a
+  // room nobody touched. Xactimate models the same split, where every room is a
+  // SKETCHROOM but only some carry line items.
+  // affected is undefined on rooms created before the column existed, so only an
+  // explicit false excludes a room.
+  const rooms = (input.rooms || []).filter((r) => r.affected !== false);
 
   // Where drying issues should send you: the Hydro page of the structure that owns
   // the chambers. Previously these pointed at `/claims/:id` (the Overview the card

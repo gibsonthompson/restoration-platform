@@ -89,6 +89,10 @@ export interface Room {
   cover_media_id: string | null; sort_order: number;
   length_ft: number | null; width_ft: number | null; height_ft: number | null;
   flooring_type: string | null;
+  // true = part of the loss (photos, moisture map, scope, line items expected).
+  // false = structural context only (a hallway on the floor plan: it carries doors
+  // and shows the flow, but is not scoped, scored, or counted for photo coverage).
+  affected: boolean;
 }
 
 export interface Note {

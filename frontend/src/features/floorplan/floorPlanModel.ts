@@ -2,7 +2,14 @@
 // room sketches. A "block" is just a room footprint placed at {x, y, rotation};
 // geometry is never copied, we read each room's live sketch walls at render time,
 // so re-sketching a room updates its block automatically.
-import { normalizeScene, UNITS_PER_FT, type Poly, type Pt, type Scene } from '../sketch/sketchModel';
+//
+// The floor plan is also an EDITOR onto those same sketches. Anything placed here
+// (a door, an air mover, a wet floor) is written into the room's own
+// resto_sketches.canvas_json, never into layout_json. layout_json stores WHERE
+// rooms sit and nothing else. That keeps one source of truth: an air mover placed
+// on the floor plan is the same record the room editor, the S500 equipment check,
+// the report, and the Xactimate export all read.
+import { normalizeScene, pointInPolygon, uid, UNITS_PER_FT, type Poly, type Pt, type Scene } from '../sketch/sketchModel';
 
 export interface Block { roomId: string; x: number; y: number; rotation: number; }   // rotation in degrees
 export interface FloorPlanLayout { blocks: Block[]; }
@@ -42,6 +49,29 @@ export function placePoint([px, py]: Pt, fp: Footprint, b: Block): Pt {
   const a = b.rotation * DEG, cos = Math.cos(a), sin = Math.sin(a);
   return [b.x + dx * cos - dy * sin, b.y + dx * sin + dy * cos];
 }
+
+// The INVERSE of placePoint: floor-plan space back into the room's own sketch
+// coordinates. This is what makes placing an element on the floor plan land in
+// exactly the right spot inside the room's sketch.
+//   place:   world = b.xy + R(a) . (local - center)
+//   unplace: local = center + R(-a) . (world - b.xy)
+export function unplacePoint([wx, wy]: Pt, fp: Footprint, b: Block): Pt {
+  const ux = wx - b.x, uy = wy - b.y;
+  const a = b.rotation * DEG, cos = Math.cos(a), sin = Math.sin(a);
+  // R(-a) = [[cos, sin], [-sin, cos]]
+  const lx = cos * ux + sin * uy;
+  const ly = -sin * ux + cos * uy;
+  return [fp.center[0] + lx, fp.center[1] + ly];
+}
+
+// The SVG transform equivalent of placePoint, so a room's whole scene can be
+// rendered in floor-plan space with the SAME renderer the room editor uses.
+// translate(b) . rotate(a) . translate(-center) applied to a local point gives
+// b + R(a).(p - center), which is placePoint exactly.
+export function blockTransform(fp: Footprint, b: Block): string {
+  return `translate(${b.x} ${b.y}) rotate(${b.rotation}) translate(${-fp.center[0]} ${-fp.center[1]})`;
+}
+
 export function placedWalls(fp: Footprint, b: Block): Poly[] {
   return fp.walls.map(w => ({ ...w, points: w.points.map(pt => placePoint(pt, fp, b)) }));
 }
@@ -61,7 +91,52 @@ export function hitBlock(fps: Record<string, Footprint>, blocks: Block[], x: num
   }
   return null;
 }
+
+// Which ROOM is under this point, tested against the real wall polygons rather
+// than the bounding box. Dragging a block by its bbox is forgiving and correct;
+// dropping an air mover into a room is not, because an L-shaped or rotated room's
+// bbox covers space that is not inside the room.
+export function hitRoom(fps: Record<string, Footprint>, blocks: Block[], x: number, y: number): Block | null {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i], fp = fps[b.roomId]; if (!fp) continue;
+    for (const w of placedWalls(fp, b)) {
+      if (w.points.length >= 3 && pointInPolygon([x, y], w.points)) return b;
+    }
+  }
+  return null;
+}
+
 export const snap = (v: number, step = UNITS_PER_FT) => Math.round(v / step) * step;
+
+// The largest wall polygon in a scene = the room outline. Used to mark a whole
+// floor wet with a polygon that is exact by construction rather than painted.
+export function roomOutline(scene: Scene): Poly | null {
+  let best: Poly | null = null, bestArea = 0;
+  for (const w of scene.walls) {
+    if (!w.points || w.points.length < 3) continue;
+    let a = 0;
+    for (let i = 0; i < w.points.length; i++) {
+      const [x1, y1] = w.points[i], [x2, y2] = w.points[(i + 1) % w.points.length];
+      a += x1 * y2 - x2 * y1;
+    }
+    a = Math.abs(a) / 2;
+    if (a > bestArea) { bestArea = a; best = w; }
+  }
+  return best;
+}
+
+// A brand-new space (hallway, closet, stairwell) gets a real rectangular sketch,
+// not just length/width numbers, because doors attach to a wallId + edge. It is
+// a real room in the structure; it just isn't AFFECTED until someone says so.
+export function rectScene(widthFt: number, lengthFt: number): Scene {
+  const w = Math.max(1, widthFt) * UNITS_PER_FT;
+  const h = Math.max(1, lengthFt) * UNITS_PER_FT;
+  return {
+    walls: [{ id: uid(), points: [[0, 0], [w, 0], [w, h], [0, h]] }],
+    wetAreas: [], equipment: [], moisturePoints: [], arrows: [], openings: [],
+    floodCuts: [], containments: []
+  };
+}
 
 // Keep saved placements; lay any not-yet-placed rooms out in a left-to-right row
 // so nothing stacks on the origin the first time you open the plan.
