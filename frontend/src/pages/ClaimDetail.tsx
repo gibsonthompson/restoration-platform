@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout , Package , FileSignature , Image as ImageIcon } from 'lucide-react';
+import { Plus, Pencil, Share2, FileText, StickyNote, ClipboardList, Home, ChevronRight, ChevronLeft, Droplet, Flame, Sprout , Package , FileSignature , Image as ImageIcon , ScanLine } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { signedUrl } from '../lib/storage';
@@ -97,7 +97,7 @@ export default function ClaimDetail() {
   const chip = lossChip(claim.type_of_loss);
   const Action = ({ icon: Icon, label, to }: { icon: any; label: string; to: string }) => (
     <button onClick={() => nav(to)}
-            className="flex-1 bg-white/10 rounded-2xl py-2.5 flex flex-col items-center gap-1.5 text-[11px] font-semibold text-white active:scale-95 transition">
+            className="bg-white/10 rounded-2xl py-2.5 flex flex-col items-center gap-1.5 text-[11px] font-semibold text-white active:scale-95 transition">
       <Icon size={17} /> {label}
     </button>
   );
@@ -127,13 +127,16 @@ export default function ClaimDetail() {
           )}
         </div>
 
-        <div className="flex gap-2 mt-4">
+        {/* Eight actions in a 4-wide grid. Photos is deliberately NOT here: the photo strip
+            sits directly below with a count and a View all, so a second door to the same
+            room was just noise. Scan reaches DocScan, which nothing linked to before. */}
+        <div className="grid grid-cols-4 gap-2 mt-4">
           <Action icon={Pencil} label="Edit" to={`/claims/${claim.id}/edit`} />
+          <Action icon={ScanLine} label="Scan doc" to={`/claims/${claim.id}/scan`} />
           <Action icon={ClipboardList} label="Scope" to={`/claims/${claim.id}/scope`} />
           <Action icon={Package} label="Contents" to={`/claims/${claim.id}/contents`} />
           <Action icon={FileSignature} label="Forms" to={`/claims/${claim.id}/forms`} />
           <Action icon={FileText} label="Docs" to={`/claims/${claim.id}/documents`} />
-          <Action icon={ImageIcon} label="Photos" to={`/claims/${claim.id}/photos`} />
           <Action icon={StickyNote} label="Notes" to={`/claims/${claim.id}/notes`} />
           <Action icon={Share2} label="Share" to={`/claims/${claim.id}/share`} />
         </div>
@@ -142,7 +145,7 @@ export default function ClaimDetail() {
       <div className="p-4 space-y-3">
         {readiness && <ClaimReadiness result={readiness} />}
 
-        {photoCount > 0 && (
+        {photoCount > 0 ? (
           <button onClick={() => nav(`/claims/${claim.id}/photos`)} className="card w-full text-left active:scale-[.99] transition">
             <div className="flex items-center justify-between mb-2">
               <div className="font-bold text-sm flex items-center gap-1.5"><ImageIcon size={15} className="text-brand" /> Photos</div>
@@ -153,6 +156,20 @@ export default function ClaimDetail() {
                 <img key={p.id} src={p.url} className="w-16 h-16 rounded-lg object-cover shrink-0" />
               ))}
             </div>
+          </button>
+        ) : (
+          // Photos is no longer in the action grid, so with zero photos this card is the
+          // ONLY door to the photo page. Without it a fresh claim could not add any.
+          <button onClick={() => nav(`/claims/${claim.id}/photos`)}
+                  className="card w-full flex items-center gap-3 text-left active:scale-[.99] transition">
+            <div className="w-10 h-10 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center shrink-0">
+              <ImageIcon size={18} />
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-[15px]">Photos</div>
+              <div className="text-[12px] text-gray-400">No photos yet. Every line item you bill needs one behind it.</div>
+            </div>
+            <ChevronRight size={18} className="ml-auto text-gray-300 shrink-0" />
           </button>
         )}
 
