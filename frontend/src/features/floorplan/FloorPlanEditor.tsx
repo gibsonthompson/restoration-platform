@@ -2,12 +2,17 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   X, Save, RotateCw, Plus, Minus, Grid3x3, DoorOpen, MousePointer2,
-  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet
+  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from '../sketch/SceneLayers';
+import { MeasureSheet } from '../sketch/MeasureSheet';
+import { formatFeetInches } from '../../lib/feetInches';
+import { viewTransform, screenToScene, panDelta, normRot, type View as VView } from '../sketch/viewTransform';
 import {
-  normalizeScene, uid, nearestWallEdge, ptsStr, OPENING_DEFAULT_FT, UNITS_PER_FT,
+  normalizeScene, uid, nearestWallEdge, hitOpening, edgeLenFt, ptsStr,
+  OPENING_DEFAULT_FT, OPENING_DEFAULT_HEIGHT_FT,
+  OPENING_DESC, OPENING_LABEL, UNITS_PER_FT,
   MATERIALS_BY_SURFACE, EQUIP_META,
   type EquipType, type OpeningKind, type Pt, type Scene
 } from '../sketch/sketchModel';
@@ -17,17 +22,52 @@ import {
   type Block, type Footprint, type WallSnap
 } from './floorPlanModel';
 
-interface RoomRow { id: string; name: string; length_ft: number | null; width_ft: number | null; affected?: boolean | null; sort_order?: number | null }
+interface RoomRow { id: string; name: string; length_ft: number | null; width_ft: number | null; height_ft?: number | null; affected?: boolean | null; sort_order?: number | null }
 type GKind = 'idle' | 'pan' | 'drag' | 'place' | 'rect';
-type Tool = 'select' | 'space' | 'door' | 'window' | 'opening' | 'equip' | 'origin' | 'wet';
+type Tool = 'select' | 'space' | 'door' | 'window' | 'opening' | 'missing_wall' | 'equip' | 'origin' | 'wet';
 type SpaceMode = 'rect' | 'poly';
+
+// The opening being measured. When `targets` is set this is a RE-MEASURE of openings that
+// already exist; otherwise `local` and `world` describe a brand new one that is in no scene
+// yet. Nothing is written until both numbers are real, because an opening with no measured
+// height is an ASSUMPTION, and an assumption prints a warning on the sheet the adjuster reads.
+//
+// `targets` is a LIST because a door on a wall between two rooms exists as one opening
+// record in EACH room. Editing only the tapped one would leave a 3 ft door on one side and a
+// 2 ft 6 in door on the other, and the two wall areas would disagree.
+interface OpeningDraft {
+  roomId: string; kind: OpeningKind;
+  edgeLenFt: number; widthFt: number; heightFt?: number;
+  stage: 'width' | 'height';
+  local?: Pt; world?: Pt;                          // placing a new one
+  targets?: { roomId: string; id: string }[];      // re-measuring existing ones
+}
+type OpeningRef = { roomId: string; id: string };
+interface OpeningSelState { targets: OpeningRef[] }
 
 const OFF = 50;          // offset cursor: the target sits up-left of the finger, never under the thumb
 const SNAP_PX = 18;      // wall-snap reach, in SCREEN pixels (scaled to scene units by zoom)
 const MIN_OVERLAP = UNITS_PER_FT;
+const ASSUMED_CEILING_FT = 8;   // matches roomDimensions' own fallback, and it warns when it uses it
 
 const ftLabel = (u: number) => `${Math.round(u / UNITS_PER_FT)} ft`;
 const dimFt = (u: number) => `${(u / UNITS_PER_FT).toFixed(1)} ft`;
+
+// Starting points a tech taps instead of types. The FIRST entry of each is Xactimate's
+// own default, decoded from the reference file's SKETCHDOCUMENTPREFS, so the common case
+// is confirming a number rather than correcting one.
+const WIDTH_QUICK: Record<OpeningKind, { label: string; ft: number }[]> = {
+  door:         [{ label: "2' 6\"", ft: 2.5 }, { label: "2' 8\"", ft: 2 + 8 / 12 }, { label: "3' 0\"", ft: 3 }],
+  window:       [{ label: "2' 8\"", ft: 2 + 8 / 12 }, { label: "3' 0\"", ft: 3 }, { label: "4' 0\"", ft: 4 }],
+  opening:      [{ label: "4' 0\"", ft: 4 }, { label: "5' 0\"", ft: 5 }, { label: "6' 0\"", ft: 6 }],
+  missing_wall: [{ label: "6' 0\"", ft: 6 }, { label: "8' 0\"", ft: 8 }, { label: "10' 0\"", ft: 10 }]
+};
+const HEIGHT_QUICK: Record<OpeningKind, { label: string; ft: number }[]> = {
+  door:         [{ label: "6' 8\"", ft: 6 + 8 / 12 }, { label: "7' 0\"", ft: 7 }, { label: "8' 0\"", ft: 8 }],
+  window:       [{ label: "3' 0\"", ft: 3 }, { label: "4' 0\"", ft: 4 }, { label: "5' 0\"", ft: 5 }],
+  opening:      [{ label: "6' 8\"", ft: 6 + 8 / 12 }, { label: "7' 0\"", ft: 7 }, { label: "8' 0\"", ft: 8 }],
+  missing_wall: []
+};
 
 // Palette stickers: the same thing that lands on the plan, so a tech sees exactly what
 // they are dragging. Equipment reuses the real EquipIcon art exported by SceneLayers
@@ -57,10 +97,21 @@ function PlanGlyph({ kind, size = 26 }: { kind: string; size?: number }) {
       <rect x={-6} y={-4.5} width={12} height={9} rx={1} />
       <line x1={0} y1={-4.5} x2={0} y2={4.5} /><line x1={-6} y1={0} x2={6} y2={0} />
     </g>);
+  // A cased opening still has a frame, so the jambs are drawn. That is the whole
+  // difference between it and a missing wall, and the glyph should say so.
   if (kind === 'opening') return shell(
-    <g stroke="#fff" strokeWidth={2.8} strokeLinecap="round">
-      <line x1={-8} y1={0} x2={-3} y2={0} /><line x1={3} y1={0} x2={8} y2={0} />
+    <g stroke="#fff" strokeWidth={2.6} strokeLinecap="round">
+      <line x1={-8} y1={0} x2={-3.5} y2={0} /><line x1={3.5} y1={0} x2={8} y2={0} />
+      <line x1={-3.5} y1={-4} x2={-3.5} y2={4} strokeWidth={1.8} />
+      <line x1={3.5} y1={-4} x2={3.5} y2={4} strokeWidth={1.8} />
     </g>);
+  // A missing wall is the ABSENCE of wall: no jambs, and the gap is drawn as nothing.
+  if (kind === 'missing_wall') return shell(
+    <g stroke="#fff" strokeLinecap="round" fill="none">
+      <line x1={-9} y1={0} x2={-4} y2={0} strokeWidth={2.8} />
+      <line x1={4} y1={0} x2={9} y2={0} strokeWidth={2.8} />
+      <line x1={-4} y1={0} x2={4} y2={0} strokeWidth={1.4} strokeDasharray="1.5 2.5" opacity={0.75} />
+    </g>, '#B45309', '#7C2D12');
   if (kind === 'origin') return shell(
     <g stroke="#fff" strokeWidth={3} strokeLinecap="round">
       <line x1={-5} y1={-5} x2={5} y2={5} /><line x1={5} y1={-5} x2={-5} y2={5} />
@@ -76,9 +127,10 @@ function PlanGlyph({ kind, size = 26 }: { kind: string; size?: number }) {
 //      room editor, the S500 check, the report, and the Xactimate export all read it.
 //
 // The interaction is held to the SAME standard as the room editor. Spaces are DRAWN
-// (rectangle drag, or the crosshair + Add corner method for any shape), and openings and
+// (rectangle drag, or the crosshair + Add corner method for any shape), openings and
 // equipment are DRAGGED out of the palette with a live ghost showing exactly where they
-// will land. Anything less is a worse tool for the same job.
+// will land, and an opening is MEASURED on drop instead of assumed. Anything less is a
+// worse tool for the same job.
 export function FloorPlanEditor({ structureId, structureName, claimId, orgId, onClose }: {
   structureId: string; structureName: string; claimId: string; orgId: string; onClose: (saved: boolean) => void;
 }) {
@@ -100,12 +152,15 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [view, setView] = useState({ tx: 0, ty: 0, k: 1 });
+  const [view, setView] = useState<VView>({ tx: 0, ty: 0, k: 1, rot: 0 });
   const [active, setActive] = useState<{ scene: Pt; px: Pt } | null>(null);
   const [draft, setDraft] = useState<{ kind: 'rect'; a: Pt; b: Pt } | { kind: 'poly'; pts: Pt[] } | null>(null);
   const [paletteGhost, setPaletteGhost] = useState<{ kind: string; x: number; y: number; over: boolean } | null>(null);
   const [nameSheet, setNameSheet] = useState<{ points: Pt[]; name: string } | null>(null);
   const [wetSheet, setWetSheet] = useState<{ roomId: string; material: string; disposition: 'dry' | 'remove' } | null>(null);
+  const [openSheet, setOpenSheet] = useState<OpeningDraft | null>(null);
+  const [selOpening, setSelOpening] = useState<OpeningSelState | null>(null);
+  const [structCeiling, setStructCeiling] = useState<number | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -113,7 +168,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; roomId?: string; grab?: Pt }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; roomId?: string; grab?: Pt; openHit?: OpeningRef[] }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -122,7 +177,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   useEffect(() => {
     (async () => {
       const { data: rws } = await supabase.from('resto_rooms')
-        .select('id, name, length_ft, width_ft, affected, sort_order').eq('structure_id', structureId).order('sort_order');
+        .select('id, name, length_ft, width_ft, height_ft, affected, sort_order').eq('structure_id', structureId).order('sort_order');
       const rs = (rws as RoomRow[]) ?? [];
       const ids = rs.map(r => r.id);
       const latest: Record<string, any> = {};
@@ -140,6 +195,12 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         fps[r.id] = footprintFromRoom(r, latest[r.id] ?? null);
         scs[r.id] = normalizeScene(latest[r.id] ?? null);
       }
+      // The level's default ceiling height. An opening can never be taller than the wall
+      // it sits in, and roomDimensions silently clamps it if it is, which would hide a typo.
+      const { data: st } = await supabase.from('resto_structures')
+        .select('default_ceiling_height_ft').eq('id', structureId).maybeSingle();
+      setStructCeiling((st as any)?.default_ceiling_height_ft ?? null);
+
       const { data: fp } = await supabase.from('resto_structure_floorplans')
         .select('layout_json').eq('structure_id', structureId).limit(1);
       const saved: Block[] = (fp && (fp[0] as any)?.layout_json?.blocks) ?? [];
@@ -160,10 +221,10 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     if (inited.current || !size.w || !size.h || loading) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const b of blocks) { const fp = footprints[b.roomId]; if (!fp) continue; const bb = placedBBox(fp, b); minX = Math.min(minX, bb.minX); minY = Math.min(minY, bb.minY); maxX = Math.max(maxX, bb.maxX); maxY = Math.max(maxY, bb.maxY); }
-    if (!isFinite(minX)) { setView({ k: 0.6, tx: size.w / 2, ty: size.h / 2 }); inited.current = true; return; }
+    if (!isFinite(minX)) { setView({ k: 0.6, rot: 0, tx: size.w / 2, ty: size.h / 2 }); inited.current = true; return; }
     const cw = (maxX - minX) || 1, ch = (maxY - minY) || 1, pad = 70;
     const k = Math.min((size.w - pad) / cw, (size.h - pad) / ch, 3);
-    setView({ k, tx: (size.w - cw * k) / 2 - minX * k, ty: (size.h - ch * k) / 2 - minY * k });
+    setView({ k, rot: 0, tx: (size.w - cw * k) / 2 - minX * k, ty: (size.h - ch * k) / 2 - minY * k });
     inited.current = true;
   }, [size, loading, blocks, footprints]);
 
@@ -173,9 +234,23 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     const p = svg.createSVGPoint(); p.x = cx; p.y = cy;
     const r = p.matrixTransform(ctm.inverse()); return [r.x, r.y];
   }
-  function pxToScene([px, py]: Pt): Pt { const v = viewRef.current; return [(px - v.tx) / v.k, (py - v.ty) / v.k]; }
+  // Un-rotates as well as un-scales, so a tap lands where the finger is even when
+  // the plan is turned.
+  function pxToScene(p: Pt): Pt { return screenToScene(p, viewRef.current, size.w, size.h); }
   const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
   const snapPt = (p: Pt): Pt => [snap(p[0]), snap(p[1])];
+
+  // Ceiling height for a room: its own override, then the level default, then the same
+  // 8 ft roomDimensions falls back to (and warns about).
+  const ceilingFtFor = (roomId: string) => {
+    const r = rooms.find(x => x.id === roomId);
+    const own = r?.height_ft != null ? Number(r.height_ft) : null;
+    return own ?? structCeiling ?? ASSUMED_CEILING_FT;
+  };
+  const ceilingIsAssumed = (roomId: string) => {
+    const r = rooms.find(x => x.id === roomId);
+    return (r?.height_ft == null) && structCeiling == null;
+  };
 
   // ---- writing into a room's OWN sketch ------------------------------------
   const patchScene = (roomId: string, fn: (s: Scene) => Scene) => {
@@ -183,10 +258,58 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     markDirty(roomId);
   };
 
+  // Which openings sit under this world point? Plural, because a door on a shared wall is
+  // one record in EACH room. The same trick placement uses: push the world point back into
+  // each room's own coordinates and ask that room's scene.
+  function hitOpeningsWorld(world: Pt): OpeningRef[] {
+    const out: OpeningRef[] = [];
+    for (const b of blocks) {
+      const fp = footprints[b.roomId]; const sc = scenes[b.roomId];
+      if (!fp || !sc) continue;
+      const lp = unplacePoint(world, fp, b);
+      const op = hitOpening(sc, lp[0], lp[1], 30);
+      if (op) out.push({ roomId: b.roomId, id: op.id });
+    }
+    return out;
+  }
+
+  // The tapped opening, read back out of the scene so the displayed size is always the
+  // stored size and never a stale copy.
+  const selOpen = (() => {
+    const t = selOpening?.targets[0];
+    if (!t) return null;
+    const op = (scenes[t.roomId]?.openings ?? []).find(o => o.id === t.id);
+    return op ? { roomId: t.roomId, op } : null;
+  })();
+  const selOpenSize = !selOpen ? ''
+    : selOpen.op.kind === 'missing_wall' ? `${formatFeetInches(selOpen.op.widthFt)} wide, full height`
+    : selOpen.op.heightFt ? `${formatFeetInches(selOpen.op.widthFt)} \u00d7 ${formatFeetInches(selOpen.op.heightFt)}`
+    : `${formatFeetInches(selOpen.op.widthFt)}, height not measured`;
+
+  function measureSelectedOpening() {
+    if (!selOpen || !selOpening) return;
+    const sc = scenes[selOpen.roomId];
+    setOpenSheet({
+      targets: selOpening.targets,
+      roomId: selOpen.roomId, kind: selOpen.op.kind,
+      edgeLenFt: edgeLenFt(sc, selOpen.op.wallId, selOpen.op.edge),
+      widthFt: selOpen.op.widthFt, heightFt: selOpen.op.heightFt,
+      stage: 'width'
+    });
+  }
+
+  function deleteSelectedOpening() {
+    if (!selOpening) return;
+    for (const t of selOpening.targets) {
+      patchScene(t.roomId, s => ({ ...s, openings: (s.openings ?? []).filter(o => o.id !== t.id) }));
+    }
+    setSelOpening(null);
+  }
+
   // Place an element at a world point: find the room under it, invert the block
   // transform to get that point in the room's OWN coordinates, then write it there.
   function commitPlace(world: Pt, kindOverride?: string) {
-    const kind = kindOverride ?? (tool === 'equip' ? equipType : (tool === 'door' || tool === 'window' || tool === 'opening') ? doorKind : tool);
+    const kind = kindOverride ?? (tool === 'equip' ? equipType : isOpeningKind(tool) ? doorKind : tool);
     const hit = hitRoom(footprints, blocks, world[0], world[1]);
     if (!hit) return;
     const fp = footprints[hit.roomId]; if (!fp) return;
@@ -197,29 +320,79 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       return;
     }
     if (kind === 'origin') { patchScene(hit.roomId, s => ({ ...s, originOfLoss: local })); return; }
-    if (kind === 'door' || kind === 'window' || kind === 'opening') { addOpening(hit.roomId, local, kind as OpeningKind, world); return; }
+    if (isOpeningKind(kind)) { beginOpening(hit.roomId, local, world, kind as OpeningKind); return; }
     if (kind === 'wet') { setWetSheet({ roomId: hit.roomId, material: 'Carpet', disposition: 'dry' }); return; }
   }
 
+  // An opening is a MEASUREMENT, not a decoration. Wall area is
+  //   (perimeter x ceiling height) - SUM(width x height)
+  // so a default-sized door is a made-up deduction on a real drywall line. Find the wall,
+  // then ask for the numbers before anything is written.
+  function beginOpening(roomId: string, local: Pt, world: Pt, kind: OpeningKind) {
+    const sc = scenes[roomId]; if (!sc) return;
+    const near = nearestWallEdge(sc, local[0], local[1]);
+    if (!near || near.dist >= 45 || near.edgeLen <= UNITS_PER_FT) return;   // not on a wall: nothing to attach to
+    setOpenSheet({
+      roomId, local, world, kind,
+      edgeLenFt: near.edgeLen / UNITS_PER_FT,
+      widthFt: OPENING_DEFAULT_FT[kind],
+      stage: 'width'
+    });
+  }
+
   // A door on a wall between two rooms is physically in BOTH rooms, but openings[] is
-  // per-room. Place it in the room that was hit, then mirror it into any other room whose
-  // wall runs through the same world point. A door visible from only one side is wrong.
-  function addOpening(roomId: string, local: Pt, kind: OpeningKind, world: Pt) {
-    const widthFt = OPENING_DEFAULT_FT[kind];
+  // per-room. Write it into the room that was hit, then mirror it into any other room
+  // whose wall runs through the same world point, carrying the SAME measured width and
+  // height. A door visible from only one side is wrong, and a door that is 3 ft on one
+  // side and 2 ft 6 in on the other is worse.
+  //
+  // With `targets`, this RE-MEASURES openings that already exist rather than adding more,
+  // and it updates every room the opening appears in, so the two halves cannot drift apart.
+  function commitOpening(d: OpeningDraft, heightFt?: number) {
+    const { kind, widthFt } = d;
+
+    // Keep the opening inside its own wall after a width change. Clamping against the OLD
+    // width and then widening to 3 ft could push it off the end of the wall it sits on.
+    const clampT = (s: Scene, o: { wallId: string; edge: number; t: number }) => {
+      const w = s.walls.find(x => x.id === o.wallId);
+      if (!w) return o.t;
+      const n = w.points.length;
+      const a = w.points[o.edge], b = w.points[(o.edge + 1) % n];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const halfFrac = Math.min(0.45, (widthFt * UNITS_PER_FT / 2) / len);
+      return Math.max(halfFrac, Math.min(1 - halfFrac, o.t));
+    };
+
+    if (d.targets) {
+      for (const t of d.targets) {
+        patchScene(t.roomId, s => ({
+          ...s,
+          openings: (s.openings ?? []).map(o => o.id === t.id
+            ? { ...o, widthFt, heightFt, t: clampT(s, o) }
+            : o)
+        }));
+      }
+      return;
+    }
+
+    if (!d.local || !d.world) return;
     const put = (rid: string, lp: Pt) => {
       const sc = scenes[rid]; if (!sc) return false;
       const near = nearestWallEdge(sc, lp[0], lp[1]);
       if (!near || near.dist >= 45 || near.edgeLen <= UNITS_PER_FT) return false;
       const halfFrac = Math.min(0.45, (widthFt * UNITS_PER_FT / 2) / near.edgeLen);
       const t = Math.max(halfFrac, Math.min(1 - halfFrac, near.t));
-      patchScene(rid, s => ({ ...s, openings: [...(s.openings ?? []), { id: uid(), wallId: near.wallId, edge: near.edge, t, widthFt, kind }] }));
+      patchScene(rid, s => ({
+        ...s,
+        openings: [...(s.openings ?? []), { id: uid(), wallId: near.wallId, edge: near.edge, t, widthFt, heightFt, kind }]
+      }));
       return true;
     };
-    if (!put(roomId, local)) return;
+    if (!put(d.roomId, d.local)) return;
     for (const b of blocks) {
-      if (b.roomId === roomId) continue;
+      if (b.roomId === d.roomId) continue;
       const fp2 = footprints[b.roomId]; if (!fp2) continue;
-      put(b.roomId, unplacePoint(world, fp2, b));
+      put(b.roomId, unplacePoint(d.world, fp2, b));
     }
   }
 
@@ -256,7 +429,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
           sort_order: nextSort, affected: false,
           width_ft: Math.round(wFt * 10) / 10, length_ft: Math.round(lFt * 10) / 10
         })
-        .select('id, name, length_ft, width_ft, affected, sort_order').single();
+        .select('id, name, length_ft, width_ft, height_ft, affected, sort_order').single();
       if (error || !room) { alert('Could not add the space: ' + (error?.message ?? 'unknown error')); return; }
 
       const { data: sk } = await supabase.from('resto_sketches')
@@ -301,7 +474,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   }
 
   // ---- canvas gestures -----------------------------------------------------
-  const isOpening = tool === 'door' || tool === 'window' || tool === 'opening';
+  const isOpening = isOpeningKind(tool);
   const isPlace = tool === 'equip' || tool === 'origin';
   const isDroppable = isOpening || isPlace || tool === 'wet';
 
@@ -326,6 +499,12 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     }
     if (isDroppable) { g.current.kind = 'place'; setActive({ scene: sO, px: pxO }); return; }
 
+    // An opening under the finger is remembered, but it does NOT take over the gesture:
+    // a drag still moves the room, and only a clean tap selects the door. Grabbing a room
+    // by its doorway is a normal way to pick it up.
+    const oh = hitOpeningsWorld(s);
+    g.current.openHit = oh.length ? oh : undefined;
+
     const hit = hitBlock(footprints, blocks, s[0], s[1]);
     if (hit) { setSelected(hit.roomId); g.current.kind = 'drag'; g.current.roomId = hit.roomId; g.current.grab = [s[0] - hit.x, s[1] - hit.y]; }
     else { setSelected(null); g.current.kind = 'pan'; }
@@ -346,7 +525,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d));
       setActive({ scene: p, px });
     }
-    else if (g.current.kind === 'pan') setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy }));
+    else if (g.current.kind === 'pan') { const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); }
     else if (g.current.kind === 'drag' && g.current.roomId) {
       const s = pxToScene(px); const id = g.current.roomId, grab = g.current.grab!;
       const raw = { x: s[0] - grab[0], y: s[1] - grab[1] };
@@ -387,7 +566,14 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       // never be flush on a 1 ft grid. Grid snap is the free-placement fallback only.
       if (!wallSnap) setBlocks(bs => bs.map(b => b.roomId === id ? { ...b, x: snap(b.x), y: snap(b.y) } : b));
     }
-    g.current.kind = 'idle'; g.current.roomId = undefined; g.current.grab = undefined;
+
+    // A tap that did not move: select the opening under it, or clear the selection.
+    if (tool === 'select' && !g.current.moved) {
+      if (g.current.openHit) { setSelOpening({ targets: g.current.openHit }); setSelected(null); }
+      else setSelOpening(null);
+    }
+
+    g.current.kind = 'idle'; g.current.roomId = undefined; g.current.grab = undefined; g.current.openHit = undefined;
     setActive(null); setWallSnap(null);
   }
 
@@ -396,7 +582,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     const dist = Math.hypot(pa[0] - pb[0], pa[1] - pb[1]); const cx = (pa[0] + pb[0]) / 2, cy = (pa[1] + pb[1]) / 2;
     const pv = pinch.current!, v = viewRef.current; const k = clampK(v.k * (dist / (pv.dist || dist))); const f = k / v.k;
     let tx = cx - (cx - v.tx) * f, ty = cy - (cy - v.ty) * f; tx += cx - pv.cx; ty += cy - pv.cy;
-    setView({ tx, ty, k }); pinch.current = { dist, cx, cy };
+    setView(vv => ({ ...vv, tx, ty, k })); pinch.current = { dist, cx, cy };
   }
 
   // ---- drag straight out of the palette, exactly as the room editor does ----
@@ -432,7 +618,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   }
   function onPaletteCancel() { pdrag.current = null; setPaletteGhost(null); setActive(null); }
 
-  function zoomBy(f: number) { const v = viewRef.current, cx = size.w / 2, cy = size.h / 2; const k = clampK(v.k * f); const ff = k / v.k; setView({ k, tx: cx - (cx - v.tx) * ff, ty: cy - (cy - v.ty) * ff }); }
+  function zoomBy(f: number) { const v = viewRef.current, cx = size.w / 2, cy = size.h / 2; const k = clampK(v.k * f); const ff = k / v.k; setView({ ...v, k, tx: cx - (cx - v.tx) * ff, ty: cy - (cy - v.ty) * ff }); }
   function rotateSel() { if (!selected) return; setBlocks(bs => bs.map(b => b.roomId === selected ? { ...b, rotation: (b.rotation + 90) % 360 } : b)); }
 
   async function persist() {
@@ -481,7 +667,8 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const OPENING_ITEMS = [
     { key: 'door', label: 'Door', onSelect: () => { setDoorKind('door'); setTool('door'); } },
     { key: 'window', label: 'Window', onSelect: () => { setDoorKind('window'); setTool('window'); } },
-    { key: 'opening', label: 'Opening', onSelect: () => { setDoorKind('opening'); setTool('opening'); } }
+    { key: 'opening', label: 'Cased', onSelect: () => { setDoorKind('opening'); setTool('opening'); } },
+    { key: 'missing_wall', label: 'Missing wall', onSelect: () => { setDoorKind('missing_wall'); setTool('missing_wall'); } }
   ];
   const PLACE_ITEMS = [
     { key: 'air_mover', label: 'Air Mover', onSelect: () => { setEquipType('air_mover'); setTool('equip'); } },
@@ -490,7 +677,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     { key: 'origin', label: 'Origin (X)', onSelect: () => setTool('origin') }
   ];
 
-  const selectTool = (t: Tool) => { setTool(t); setDraft(null); setActive(null); setSelected(null); };
+  const selectTool = (t: Tool) => { setTool(t); setDraft(null); setActive(null); setSelected(null); setSelOpening(null); };
   const Tab = ({ t, icon: Icon, label, on }: { t: Tool; icon: any; label: string; on?: boolean }) => (
     <button onClick={() => selectTool(t)}
       className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold ${(on ?? tool === t) ? 'text-sky' : 'text-gray-400'}`}>
@@ -515,7 +702,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
           <svg ref={svgRef} className="w-full h-full touch-none" viewBox={`0 0 ${size.w || 1} ${size.h || 1}`}
                onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
             <rect x={0} y={0} width={size.w} height={size.h} fill="#F4F7FB" />
-            <g transform={`translate(${view.tx} ${view.ty}) scale(${k})`}>
+            <g transform={viewTransform(view, size.w, size.h)}>
               <g stroke="#DCE6F1" strokeWidth={1 / k}>
                 {gx.map(x => <line key={'x' + x} x1={x} y1={vMinY} x2={x} y2={vMaxY} />)}
                 {gy.map(y => <line key={'y' + y} x1={vMinX} y1={y} x2={vMaxX} y2={y} />)}
@@ -535,7 +722,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                         doors, wet areas and equipment all land exactly right. */}
                     {fp.hasSketch && scene ? (
                       <g transform={blockTransform(fp, b)} opacity={affected ? 1 : 0.55}>
-                        <SceneLayers scene={scene} />
+                        <SceneLayers scene={scene} rot={view.rot} />
                       </g>
                     ) : (
                       walls.map((w, i) => (
@@ -549,11 +736,13 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                                strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
                     ))}
                     <text x={b.x} y={b.y} textAnchor="middle" dominantBaseline="central"
+                          transform={`rotate(${-view.rot} ${b.x} ${b.y})`}
                           fontSize={18 / k} fontWeight={700} fill={affected ? '#0E2A4D' : '#64748B'}
                           stroke="#eef4fb" strokeWidth={4 / k} paintOrder="stroke"
                           style={{ pointerEvents: 'none' }}>{fp.name}</text>
                     {!affected && (
                       <text x={b.x} y={b.y + 22 / k} textAnchor="middle" dominantBaseline="central"
+                            transform={`rotate(${-view.rot} ${b.x} ${b.y + 22 / k})`}
                             fontSize={11 / k} fontWeight={600} fill="#64748B" style={{ pointerEvents: 'none' }}>context only</text>
                     )}
                   </g>
@@ -614,6 +803,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
               {active && isDroppable && (() => {
                 const hit = hitRoom(footprints, blocks, active.scene[0], active.scene[1]);
                 const kind = tool === 'equip' ? equipType : isOpening ? doorKind : tool;
+                const openColor = doorKind === 'missing_wall' ? '#B45309' : '#1483C2';
                 return (
                   <g style={{ pointerEvents: 'none' }} opacity={hit ? 0.8 : 0.3}>
                     {(kind === 'air_mover' || kind === 'dehumidifier' || kind === 'air_scrubber') && (
@@ -631,12 +821,12 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                     )}
                     {/* an opening previews ON the wall it will attach to, as in the room editor */}
                     {isOpening && (() => {
-                      if (!hit) return <circle cx={active.scene[0]} cy={active.scene[1]} r={16} fill="#1483C2" fillOpacity={0.25} stroke="#1483C2" strokeWidth={3} />;
+                      if (!hit) return <circle cx={active.scene[0]} cy={active.scene[1]} r={16} fill={openColor} fillOpacity={0.25} stroke={openColor} strokeWidth={3} />;
                       const fp2 = footprints[hit.roomId]; const sc = scenes[hit.roomId];
                       if (!fp2 || !sc) return null;
                       const lp = unplacePoint(active.scene, fp2, hit);
                       const near = nearestWallEdge(sc, lp[0], lp[1]);
-                      if (!near || near.dist >= 45) return <circle cx={active.scene[0]} cy={active.scene[1]} r={16} fill="#1483C2" fillOpacity={0.2} stroke="#1483C2" strokeWidth={3} />;
+                      if (!near || near.dist >= 45) return <circle cx={active.scene[0]} cy={active.scene[1]} r={16} fill={openColor} fillOpacity={0.2} stroke={openColor} strokeWidth={3} />;
                       const w = sc.walls.find(x => x.id === near.wallId); if (!w) return null;
                       const n = w.points.length;
                       const a = w.points[near.edge], b2 = w.points[(near.edge + 1) % n];
@@ -647,7 +837,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                       return (
                         <g transform={blockTransform(fp2, hit)}>
                           <line x1={cx2 - ux * half} y1={cy2 - uy * half} x2={cx2 + ux * half} y2={cy2 + uy * half}
-                                stroke="#1483C2" strokeWidth={12} strokeLinecap="round" opacity={0.7} />
+                                stroke={openColor} strokeWidth={12} strokeLinecap="round" opacity={0.7} />
                         </g>
                       );
                     })()}
@@ -674,6 +864,15 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
+          {/* Turn the plan to face the way you are standing in the building. */}
+          <button onClick={() => setView(v => ({ ...v, rot: normRot(v.rot + 90) }))}
+            className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 text-navy"><RotateCw size={18} /></button>
+          {view.rot !== 0 && (
+            <button onClick={() => setView(v => ({ ...v, rot: 0 }))}
+              className="bg-navy text-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95">
+              <Compass size={18} style={{ transform: `rotate(${-view.rot}deg)` }} />
+            </button>
+          )}
           <button onClick={() => zoomBy(1.25)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Plus size={18} /></button>
           <button onClick={() => zoomBy(0.8)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Minus size={18} /></button>
         </div>
@@ -690,7 +889,21 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
           </div>
         )}
 
-        {tool === 'select' && selFp && (
+        {tool === 'select' && selOpen && (
+          <div className="absolute left-3 bottom-3 flex gap-2 items-center max-w-[70%]">
+            <button onClick={measureSelectedOpening}
+              className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-5 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2 min-w-0">
+              <Ruler size={16} className="shrink-0" />
+              <span className="truncate">{OPENING_LABEL[selOpen.op.kind]} {selOpenSize}</span>
+            </button>
+            <button onClick={deleteSelectedOpening}
+              className="bg-red-600 text-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 shrink-0">
+              <Trash2 size={16} />
+            </button>
+          </div>
+        )}
+
+        {tool === 'select' && selFp && !selOpen && (
           <div className="absolute left-3 bottom-3 flex gap-2 flex-wrap max-w-[70%]">
             <button onClick={rotateSel} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><RotateCw size={16} /> Rotate</button>
             <button onClick={toggleAffected} className={`rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95 ${selAffected ? 'bg-white text-gray-600' : 'bg-sky text-white'}`}>
@@ -718,7 +931,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       )}
 
       {isOpening && (
-        <div className="grid grid-cols-3 gap-1 px-3 py-2 bg-white border-t border-gray-100">
+        <div className="grid grid-cols-4 gap-1 px-2 py-2 bg-white border-t border-gray-100">
           {OPENING_ITEMS.map(it => {
             const on = activeKey === it.key;
             return (
@@ -728,7 +941,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                 style={{ touchAction: 'none' }}
                 className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl ${on ? 'bg-sky-soft ring-1 ring-sky/40' : 'active:bg-gray-50'}`}>
                 <PlanGlyph kind={it.key} />
-                <span className={`text-[11px] font-semibold ${on ? 'text-sky-deep' : 'text-gray-500'}`}>{it.label}</span>
+                <span className={`text-[10px] font-semibold leading-tight text-center ${on ? 'text-sky-deep' : 'text-gray-500'}`}>{it.label}</span>
               </button>
             );
           })}
@@ -753,9 +966,9 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'select' && (selected ? (magnet ? 'Drag a room near another and it snaps flush · Rotate in 90 degree steps' : 'Snapping is off · Drag to position') : 'Tap a room to select it, then drag or rotate. Two fingers to pan and zoom.')}
+        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Drag a room near another and it snaps flush · Rotate in 90 degree steps' : 'Snapping is off · Drag to position') : 'Tap a room to select it, or an OPENING to re-measure it. Two fingers to pan and zoom.')}
         {tool === 'space' && (spaceMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Draw an L-shaped hall if that is the shape.' : 'Drag a box from the anchor corner. Snaps to the 1 ft grid.')}
-        {isOpening && `Drag the ${doorKind} onto a wall. The highlight shows where it attaches, and it mirrors onto a shared wall.`}
+        {isOpening && `Drag the ${OPENING_LABEL[doorKind].toLowerCase()} onto a wall, then measure it. It mirrors onto a shared wall.`}
         {isPlace && 'Drag onto the map. The preview shows exactly where it lands, release to drop.'}
         {tool === 'wet' && 'Tap a room to mark its whole floor wet. Use the room sketch for partial areas.'}
       </div>
@@ -767,6 +980,53 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         <Tab t="equip" icon={MapPin} label="Place" on={isPlace} />
         <Tab t="wet" icon={Droplet} label="Water" />
       </nav>
+
+      {/* Measure the opening. Two steps for a door, window, or cased opening. ONE for a
+          missing wall, because a missing wall IS full ceiling height by definition and
+          asking for a height would invite a wrong answer. */}
+      {openSheet && openSheet.stage === 'width' && (
+        <MeasureSheet
+          title={`${OPENING_LABEL[openSheet.kind]} width`}
+          subtitle="Measure across the wall, jamb to jamb."
+          note={OPENING_DESC[openSheet.kind]}
+          initialFt={openSheet.widthFt}
+          min={0.5}
+          max={Math.round(openSheet.edgeLenFt * 100) / 100}
+          quick={WIDTH_QUICK[openSheet.kind].filter(q => q.ft <= openSheet.edgeLenFt)}
+          step={openSheet.kind === 'missing_wall' ? undefined : { current: 1, total: 2 }}
+          onCancel={() => setOpenSheet(null)}
+          onSave={(ft) => {
+            if (openSheet.kind === 'missing_wall') {
+              commitOpening({ ...openSheet, widthFt: ft });   // height is the ceiling, by definition
+              setOpenSheet(null);
+            } else {
+              setOpenSheet(s => (s ? { ...s, widthFt: ft, stage: 'height' } : s));
+            }
+          }}
+        />
+      )}
+
+      {openSheet && openSheet.stage === 'height' && (() => {
+        const ceil = ceilingFtFor(openSheet.roomId);
+        const assumed = ceilingIsAssumed(openSheet.roomId);
+        return (
+          <MeasureSheet
+            title={`${OPENING_LABEL[openSheet.kind]} height`}
+            subtitle="Floor to the top of the opening."
+            note={assumed
+              ? `No ceiling height is set for this room or level, so the wall is assumed to be ${ASSUMED_CEILING_FT} ft. Set the real one on the level and the measurement sheet stops flagging it.`
+              : `Wall area subtracts width times height, so this number lands on the drywall and paint lines. The wall here is ${ceil} ft.`}
+            initialFt={openSheet.heightFt ?? OPENING_DEFAULT_HEIGHT_FT[openSheet.kind]}
+            min={0.5}
+            max={ceil}
+            quick={HEIGHT_QUICK[openSheet.kind].filter(q => q.ft <= ceil)}
+            step={{ current: 2, total: 2 }}
+            onBack={() => setOpenSheet(s => (s ? { ...s, stage: 'width' } : s))}
+            onCancel={() => setOpenSheet(null)}
+            onSave={(ft) => { commitOpening(openSheet, ft); setOpenSheet(null); }}
+          />
+        );
+      })()}
 
       {nameSheet && (
         <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
@@ -826,4 +1086,10 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       )}
     </div>
   );
+}
+
+// One place decides what counts as an opening, so the tool, the palette, the ghost, and
+// the commit path can never disagree about whether missing_wall is one of them.
+function isOpeningKind(t: string): boolean {
+  return t === 'door' || t === 'window' || t === 'opening' || t === 'missing_wall';
 }

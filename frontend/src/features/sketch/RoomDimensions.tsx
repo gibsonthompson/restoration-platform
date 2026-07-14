@@ -22,7 +22,7 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
       <div className="card flex items-start gap-2.5">
         <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-400 flex items-center justify-center shrink-0"><Ruler size={16} /></div>
         <div className="text-[12px] text-gray-500 leading-relaxed">
-          Draw the room outline and its measurements appear here: floor, ceiling, wall area with the doors and windows deducted, and baseboard.
+          Draw the room and its measurements appear here: floor, ceiling, wall area with the doors and windows taken out, and how much baseboard it needs.
         </div>
       </div>
     );
@@ -45,7 +45,7 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
         <div className="flex-1 min-w-0">
           <div className="font-bold text-[14px] text-navy">Measurements</div>
           <div className="text-[11px] text-gray-400 leading-snug tabular-nums">
-            {d.F} SF floor &middot; {d.W} SF wall &middot; {d.baseboardLF} LF base
+            Floor {d.F} sq ft &middot; Walls {d.W} sq ft &middot; Baseboard {d.baseboardLF} ft
           </div>
         </div>
         <ChevronDown size={17} className={`text-gray-300 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -68,17 +68,17 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
 
           <div className="h-px bg-gray-100 my-1" />
 
-          <Row label="Floor" value={`${d.F} SF`} sub={`${d.SY} SY`} />
-          <Row label="Ceiling" value={`${d.C} SF`} sub="flat ceiling" />
-          <Row label="Perimeter" value={`${d.PF} LF`} />
+          <Row label="Floor area" value={`${d.F} sq ft`} sub={`${d.SY} sq yards`} />
+          <Row label="Ceiling area" value={`${d.C} sq ft`} sub="flat ceiling" />
+          <Row label="Perimeter" value={`${d.PF} ft`} sub="all the way around" />
 
           {/* THE WALL MATH, shown step by step. This is the number that pays for paint
               and drywall, so it has to be defensible line by line, not a black box. */}
           <div className="mt-2 bg-sky-soft/50 rounded-xl p-3">
             <div className="text-[11px] font-bold uppercase tracking-wide text-sky-deep mb-1.5">Wall area</div>
             <div className="flex items-baseline justify-between py-0.5">
-              <span className="text-[12px] text-sky-deep/80">{d.PF} LF &times; {formatFeetInches(d.SH)}</span>
-              <span className="text-[13px] font-semibold text-sky-deep tabular-nums">{d.grossWallSF} SF</span>
+              <span className="text-[12px] text-sky-deep/80">{d.PF} ft around &times; {formatFeetInches(d.SH)} high</span>
+              <span className="text-[13px] font-semibold text-sky-deep tabular-nums">{d.grossWallSF} sq ft</span>
             </div>
             {d.openings.map(o => (
               <div key={o.id} className="flex items-baseline justify-between py-0.5">
@@ -86,19 +86,19 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
                   less {OPENING_LABEL[o.kind].toLowerCase()} {formatFeetInches(o.widthFt)} &times; {formatFeetInches(o.heightFt)}
                   {o.assumedHeight && <span className="text-amber-700 font-semibold"> (assumed)</span>}
                 </span>
-                <span className="text-[13px] font-semibold text-sky-deep/70 tabular-nums">-{o.sqft} SF</span>
+                <span className="text-[13px] font-semibold text-sky-deep/70 tabular-nums">-{o.sqft} sq ft</span>
               </div>
             ))}
             <div className="h-px bg-sky-deep/15 my-1.5" />
             <div className="flex items-baseline justify-between">
-              <span className="text-[12px] font-bold text-sky-deep">Net wall area</span>
-              <span className="text-[16px] font-extrabold text-sky-deep tabular-nums">{d.W} SF</span>
+              <span className="text-[12px] font-bold text-sky-deep">Wall area to bill</span>
+              <span className="text-[16px] font-extrabold text-sky-deep tabular-nums">{d.W} sq ft</span>
             </div>
           </div>
 
           <div className="mt-1">
-            <Row label="Walls + ceiling" value={`${d.WC} SF`} sub="drywall, paint" />
-            <Row label="Baseboard" value={`${d.baseboardLF} LF`} sub="doors deducted, windows not" />
+            <Row label="Walls and ceiling" value={`${d.WC} sq ft`} sub="what drywall and paint bill" />
+            <Row label="Baseboard" value={`${d.baseboardLF} ft`} sub="doorways taken out, windows left in" />
           </div>
 
           {d.warnings.length > 0 && (
@@ -112,8 +112,9 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
             </div>
           )}
 
-          <p className="text-[10.5px] text-gray-400 leading-relaxed mt-2.5">
-            These are the numbers Xactimate bills against: floor (F), ceiling (C), wall (W), walls and ceiling (WC), and perimeter (PF).
+          {/* the estimator's shorthand, kept quiet at the bottom for whoever needs it */}
+          <p className="text-[10px] text-gray-400 leading-relaxed mt-2.5">
+            Xactimate calls these F (floor), C (ceiling), W (wall), WC (walls and ceiling), PF (perimeter). Estimators say "SF" for square feet and "LF" for linear feet, which is just feet measured in a line, like baseboard.
           </p>
         </div>
       )}

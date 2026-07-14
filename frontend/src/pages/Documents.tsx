@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { FileText, FilePlus, Download, X, ChevronRight, ExternalLink , Trash2 } from 'lucide-react';
+import { FileText, FilePlus, Download, X, ChevronRight, ExternalLink , Trash2, Ruler, Images } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { SubHeader } from '../components/SubHeader';
 import { PdfPreview } from '../components/PdfPreview';
@@ -14,16 +14,20 @@ interface Doc {
 
 const TYPE_LABEL: Record<string, string> = {
   preliminary_report: 'Preliminary Report', drying_report: 'Drying Report', drying_log: 'Daily Drying Log', esx: 'Xactimate Export',
-  schedule_of_loss: 'Schedule of Loss', full_export: 'Full Report', upload: 'Upload'
+  schedule_of_loss: 'Schedule of Loss', full_export: 'Full Report', upload: 'Upload',
+  measurements: 'Measurements', client_pack: 'Photos & Notes', form: 'Signed Form'
 };
 const docName = (d: Doc) => d.title || TYPE_LABEL[d.type] || 'Report';
+
+// Which generator is currently running. One at a time: they all hit the same
+// claim and the list reloads after each, so letting two race would just fight
+// over the same refresh.
+type BusyKey = 'report' | 'log' | 'esx' | 'measurements' | 'pack';
 
 export default function Documents() {
   const { claimId } = useParams();
   const [docs, setDocs] = useState<Doc[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [busyLog, setBusyLog] = useState(false);
-  const [busyEsx, setBusyEsx] = useState(false);
+  const [busy, setBusy] = useState<BusyKey | null>(null);
   const [preview, setPreview] = useState<{ doc: Doc; url: string | null; downloadUrl: string | null; loading: boolean; error: string | null } | null>(null);
 
   async function load() {
@@ -35,13 +39,17 @@ export default function Documents() {
   }
   useEffect(() => { void load(); }, [claimId]);
 
-  async function generate() {
+  // Every generator route has the same shape: POST { claimId }, build the PDF,
+  // file a resto_documents row, return it. So they share one caller. The backend
+  // now surfaces a failed row insert as a 500 instead of a silent ok:true, which
+  // means an error here is a real error and not a lie.
+  async function generate(endpoint: string, key: BusyKey, failLabel: string) {
     if (!claimId) return;
     if (!API) { alert('Report service not configured. Set VITE_API_URL in Vercel.'); return; }
-    setBusy(true);
+    setBusy(key);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${API}/api/resto/report`, {
+      const res = await fetch(`${API}/api/resto/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
         body: JSON.stringify({ claimId })
@@ -49,44 +57,8 @@ export default function Documents() {
       if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || res.statusText); }
       await load();
     } catch (err: any) {
-      alert('Report failed: ' + (err?.message ?? 'unknown'));
-    } finally { setBusy(false); }
-  }
-
-  async function generateDryingLog() {
-    if (!claimId) return;
-    if (!API) { alert('Report service not configured. Set VITE_API_URL in Vercel.'); return; }
-    setBusyLog(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${API}/api/resto/drying-log`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
-        body: JSON.stringify({ claimId })
-      });
-      if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || res.statusText); }
-      await load();
-    } catch (err: any) {
-      alert('Drying log failed: ' + (err?.message ?? 'unknown'));
-    } finally { setBusyLog(false); }
-  }
-
-  async function generateEsx() {
-    if (!claimId) return;
-    if (!API) { alert('Export service not configured. Set VITE_API_URL in Vercel.'); return; }
-    setBusyEsx(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${API}/api/resto/esx`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
-        body: JSON.stringify({ claimId })
-      });
-      if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || res.statusText); }
-      await load();
-    } catch (err: any) {
-      alert('Export failed: ' + (err?.message ?? 'unknown'));
-    } finally { setBusyEsx(false); }
+      alert(failLabel + ' failed: ' + (err?.message ?? 'unknown'));
+    } finally { setBusy(null); }
   }
 
   // .esx is a Xactimate ZIP, not a PDF — download it directly rather than previewing.
@@ -96,9 +68,6 @@ export default function Documents() {
     if (data?.signedUrl) window.location.href = data.signedUrl;
   }
 
-  // Open a details + preview sheet. The signed URL is fetched here (once), so the
-  // "Open PDF" control in the sheet can be a plain anchor — no window.open after an
-  // await, which is what the mobile popup blocker was killing.
   async function deleteDoc(d: Doc) {
     if (!confirm('Delete this report? This cannot be undone.')) return;
     try {
@@ -108,6 +77,9 @@ export default function Documents() {
     } catch (e: any) { alert('Could not delete: ' + (e?.message ?? 'unknown')); }
   }
 
+  // Open a details + preview sheet. The signed URL is fetched here (once), so the
+  // "Open PDF" control in the sheet can be a plain anchor — no window.open after an
+  // await, which is what the mobile popup blocker was killing.
   async function openDoc(d: Doc) {
     if (d.type === 'esx') { void downloadEsx(d); return; }
     setPreview({ doc: d, url: null, downloadUrl: null, loading: true, error: null });
@@ -124,18 +96,36 @@ export default function Documents() {
     setPreview({ doc: d, url: base, downloadUrl: `${base}&download=1`, loading: false, error: null });
   }
 
+  const running = busy !== null;
+
   return (
     <div>
       <SubHeader title="Documents" />
       <div className="p-4 space-y-3">
-        <button onClick={generate} disabled={busy} className="btn-primary w-full py-3.5 disabled:opacity-60">
-          <FilePlus size={17} /> {busy ? 'Generating report…' : 'Generate Full Report'}
+        <button onClick={() => generate('report', 'report', 'Report')} disabled={running} className="btn-primary w-full py-3.5 disabled:opacity-60">
+          <FilePlus size={17} /> {busy === 'report' ? 'Generating report…' : 'Generate Full Report'}
         </button>
-        <button onClick={generateDryingLog} disabled={busyLog} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
-          <FileText size={16} /> {busyLog ? 'Generating drying log…' : 'Generate Daily Drying Log'}
+
+        <button onClick={() => generate('measurements', 'measurements', 'Measurements')} disabled={running} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
+          <Ruler size={16} /> {busy === 'measurements' ? 'Building measurements…' : 'Generate Measurement Sheet'}
         </button>
-        <button onClick={generateEsx} disabled={busyEsx} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
-          <FileText size={16} /> {busyEsx ? 'Building export…' : 'Export to Xactimate (.esx) · beta'}
+        <p className="text-[11px] text-gray-400 px-1 -mt-1 leading-snug">
+          Room by room floor, ceiling, perimeter, wall area with every opening deducted, and baseboard. Shows the arithmetic so an adjuster can follow it.
+        </p>
+
+        <button onClick={() => generate('drying-log', 'log', 'Drying log')} disabled={running} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
+          <FileText size={16} /> {busy === 'log' ? 'Generating drying log…' : 'Generate Daily Drying Log'}
+        </button>
+
+        <button onClick={() => generate('client-pack', 'pack', 'Client pack')} disabled={running} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
+          <Images size={16} /> {busy === 'pack' ? 'Building photo pack…' : 'Generate Photos & Notes (for the homeowner)'}
+        </button>
+        <p className="text-[11px] text-gray-400 px-1 -mt-1 leading-snug">
+          Photos and crew notes only. No scope, no quantities, no codes, no pricing. Safe to hand to the customer.
+        </p>
+
+        <button onClick={() => generate('esx', 'esx', 'Export')} disabled={running} className="btn-soft w-full py-3 text-sm disabled:opacity-60">
+          <FileText size={16} /> {busy === 'esx' ? 'Building export…' : 'Export to Xactimate (.esx) · beta'}
         </button>
 
         {docs.length === 0 && (

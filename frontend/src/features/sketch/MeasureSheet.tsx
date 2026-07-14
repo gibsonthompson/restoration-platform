@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, Info } from 'lucide-react';
 import { parseFeetInches, formatFeetInches } from '../../lib/feetInches';
 
 // Type an exact measurement.
@@ -8,15 +9,18 @@ import { parseFeetInches, formatFeetInches } from '../../lib/feetInches';
 // truth. Accepts what a tech actually types: 12' 7", 12'7, 12-7, 12 7, 12ft 7in, 151",
 // 12' 7 1/2", or a bare 12.583. Rejects garbage rather than silently reading it as zero,
 // because a zero dimension is a zero-dollar line item.
-export function MeasureSheet({ title, subtitle, initialFt, min, max, onCancel, onSave, quick }: {
+export function MeasureSheet({ title, subtitle, note, initialFt, min, max, onCancel, onSave, onBack, quick, step }: {
   title: string;
   subtitle?: string;
+  note?: string;                          // plain-English explanation of the thing being measured
   initialFt?: number | null;
   min?: number;
   max?: number;
   quick?: { label: string; ft: number }[];
+  step?: { current: number; total: number };
   onCancel: () => void;
   onSave: (ft: number) => void;
+  onBack?: () => void;                    // a multi-step flow must be reversible
 }) {
   const [text, setText] = useState(initialFt != null && initialFt > 0 ? formatFeetInches(initialFt) : '');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,8 +44,27 @@ export function MeasureSheet({ title, subtitle, initialFt, min, max, onCancel, o
     <div className="fixed inset-0 z-[70] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6vh)' }}>
       <div className="absolute inset-0 bg-navy/40" onClick={onCancel} />
       <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
-        <div className="font-display font-bold text-lg text-navy">{title}</div>
-        {subtitle && <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{subtitle}</p>}
+        <div className="flex items-start gap-2">
+          {onBack && (
+            <button onClick={onBack} className="w-8 h-8 -ml-1 rounded-xl flex items-center justify-center text-gray-500 active:bg-gray-100 shrink-0">
+              <ChevronLeft size={20} />
+            </button>
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="font-display font-bold text-lg text-navy">{title}</div>
+            {subtitle && <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{subtitle}</p>}
+          </div>
+          {step && (
+            <span className="text-[11px] font-bold text-gray-400 shrink-0 mt-1">{step.current} of {step.total}</span>
+          )}
+        </div>
+
+        {note && (
+          <div className="flex items-start gap-2 bg-sky-soft/60 rounded-xl px-3 py-2 mt-2.5">
+            <Info size={13} className="text-sky-deep shrink-0 mt-0.5" />
+            <span className="text-[11.5px] text-sky-deep leading-relaxed">{note}</span>
+          </div>
+        )}
 
         <input
           ref={inputRef}

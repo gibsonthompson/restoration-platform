@@ -8,8 +8,11 @@ import { SCENE_SIZE, normalizeScene, type Scene } from './sketchModel';
 interface SketchRow { id: string; canvas_json: any; type: string; created_at: string; }
 
 // Sketches tab: list of moisture maps + create/open the full-screen editor.
-export function SketchesTab({ roomId, roomName, claimId, orgId }:
-  { roomId: string; roomName?: string; claimId: string; orgId: string }) {
+//
+// structureId is optional. The editor works without it (it looks the structure up via
+// the room to find the default ceiling height), so passing it down just saves a query.
+export function SketchesTab({ roomId, roomName, claimId, orgId, structureId }:
+  { roomId: string; roomName?: string; claimId: string; orgId: string; structureId?: string }) {
   const [sketches, setSketches] = useState<SketchRow[]>([]);
   const [editing, setEditing] = useState<SketchRow | null>(null);
   const [creating, setCreating] = useState(false);
@@ -32,7 +35,7 @@ export function SketchesTab({ roomId, roomName, claimId, orgId }:
     return (
       <MoistureMapEditor
         sketch={editing}
-        roomId={roomId} roomName={roomName} claimId={claimId} orgId={orgId}
+        roomId={roomId} roomName={roomName} claimId={claimId} orgId={orgId} structureId={structureId}
         onClose={(saved) => { setCreating(false); setEditing(null); if (saved) void load(); }}
       />
     );

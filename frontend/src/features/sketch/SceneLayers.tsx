@@ -3,7 +3,11 @@ import { EQUIP_META, ptsStr, pointDisplay, smoothClosedPath, polygonCentroid, wa
 // Pictographic equipment icons (fan / dehumidifier unit / filter), identical to
 // the report engine (resto-map-svg.js) so the app and PDF match exactly.
 // Flood cut: a hatched band along the inside of the affected wall + cut height label.
-function FloodCutBand({ scene, fc }: { scene: Scene; fc: FloodCut }) {
+// Counter-rotation for a label: the drawing turns, the words do not.
+const upright = (rot: number | undefined, x: number, y: number) =>
+  (rot ? `rotate(${-rot} ${x} ${y})` : undefined);
+
+function FloodCutBand({ scene, fc, rot }: { scene: Scene; fc: FloodCut; rot?: number }) {
   const ep = edgePoints(scene, fc.wallId, fc.edge); if (!ep) return null;
   const nrm = edgeInwardNormal(scene, fc.wallId, fc.edge);
   const ends = floodCutEnds(scene, fc); if (!ends) return null;
@@ -17,12 +21,12 @@ function FloodCutBand({ scene, fc }: { scene: Scene; fc: FloodCut }) {
   return (
     <g>
       <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#F59E0B" strokeWidth={7} strokeLinecap="round" strokeDasharray="2 7" opacity={0.95} />
-      <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} linear ft &middot; {ht} cut</text>
+      <text x={mid[0]} y={mid[1]} transform={upright(rot, mid[0], mid[1])} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#B45309" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lf} linear ft &middot; {ht} cut</text>
     </g>
   );
 }
 // Containment: a tap-placed poly barrier symbol (width x height) with a sq-ft label.
-function ContainmentBar({ c, selected }: { c: Containment; selected?: boolean }) {
+function ContainmentBar({ c, selected, rot }: { c: Containment; selected?: boolean; rot?: number }) {
   if (c.x != null && c.y != null) {
     const sqft = Math.round((c.widthFt ?? 0) * c.heightFt);
     const h = 18;
@@ -31,8 +35,8 @@ function ContainmentBar({ c, selected }: { c: Containment; selected?: boolean })
         <rect x={c.x - h} y={c.y - h} width={h * 2} height={h * 2} rx={4} fill="#8B5CF6" fillOpacity={0.16} stroke={selected ? '#6D28D9' : '#8B5CF6'} strokeWidth={2.5} strokeDasharray="4 3" />
         <line x1={c.x - h} y1={c.y - h} x2={c.x + h} y2={c.y + h} stroke="#8B5CF6" strokeWidth={2} opacity={0.5} />
         <line x1={c.x + h} y1={c.y - h} x2={c.x - h} y2={c.y + h} stroke="#8B5CF6" strokeWidth={2} opacity={0.5} />
-        <text x={c.x} y={c.y - h - 9} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft plastic</text>
-        {c.label && <text x={c.x} y={c.y + h + 11} textAnchor="middle" dominantBaseline="central" fontSize={10} fontWeight={700} fill="#7C3AED" stroke="#fff" strokeWidth={3} paintOrder="stroke">{c.label}</text>}
+        <text x={c.x} y={c.y - h - 9} transform={upright(rot, c.x, c.y - h - 9)} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft plastic</text>
+        {c.label && <text x={c.x} y={c.y + h + 11} transform={upright(rot, c.x, c.y + h + 11)} textAnchor="middle" dominantBaseline="central" fontSize={10} fontWeight={700} fill="#7C3AED" stroke="#fff" strokeWidth={3} paintOrder="stroke">{c.label}</text>}
       </g>
     );
   }
@@ -43,7 +47,7 @@ function ContainmentBar({ c, selected }: { c: Containment; selected?: boolean })
     return (
       <g>
         <line x1={c.from[0]} y1={c.from[1]} x2={c.to[0]} y2={c.to[1]} stroke={selected ? '#6D28D9' : '#8B5CF6'} strokeWidth={9} strokeLinecap="round" strokeDasharray="3 8" />
-        <text x={mid[0]} y={mid[1] - 12} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft plastic</text>
+        <text x={mid[0]} y={mid[1] - 12} transform={upright(rot, mid[0], mid[1] - 12)} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#6D28D9" stroke="#fff" strokeWidth={4} paintOrder="stroke">{sqft} sq ft plastic</text>
       </g>
     );
   }
@@ -73,7 +77,7 @@ function EquipGlyph({ eq, selected }: { eq: Equip; selected?: boolean }) {
 // Double-line mitered wall band (no fill: the floor fill is a separate layer
 // drawn beneath the wet areas). Matches resto-map-svg.js at 2x scene scale.
 const WALL_W = 18, WALL_LW = 3.2;
-function WallBand({ w }: { w: Poly }) {
+function WallBand({ w, rot }: { w: Poly; rot?: number }) {
   const c = polygonCentroid(w.points);
   const pts = ptsStr(w.points);
   return (
@@ -81,7 +85,7 @@ function WallBand({ w }: { w: Poly }) {
       <polygon points={pts} fill="none" stroke="#0E2A4D" strokeWidth={WALL_W} strokeLinejoin="miter" strokeMiterlimit={8} />
       <polygon points={pts} fill="none" stroke="#ffffff" strokeWidth={WALL_W - 2 * WALL_LW} strokeLinejoin="miter" strokeMiterlimit={8} />
       {w.material && (
-        <text x={c[0]} y={c[1] + 8} textAnchor="middle" fontSize={22} fontWeight={700} fill="#64748b">{w.material}</text>
+        <text x={c[0]} y={c[1] + 8} transform={upright(rot, c[0], c[1] + 8)} textAnchor="middle" fontSize={22} fontWeight={700} fill="#64748b">{w.material}</text>
       )}
     </g>
   );
@@ -100,13 +104,13 @@ function ArrowGlyph({ a, selected }: { a: Arrow; selected?: boolean }) {
   );
 }
 
-function PointGlyph({ mp, display, selected }: { mp: MoisturePoint; display: string; selected?: boolean }) {
+function PointGlyph({ mp, display, selected, rot }: { mp: MoisturePoint; display: string; selected?: boolean; rot?: number }) {
   return (
     <g transform={`translate(${mp.x},${mp.y})`}>
       <path d="M0 14 C 0 14 22 -10 22 -28 a22 22 0 1 0 -44 0 C -22 -10 0 14 0 14 Z"
             fill="#F26B3A" stroke={selected ? '#0E2A4D' : '#D8501F'} strokeWidth={selected ? 5 : 2.5} />
       <circle cx={0} cy={-28} r={15} fill="#fff" />
-      <text x={0} y={-28} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#D8501F">
+      <text x={0} y={-28} transform={upright(rot, 0, -28)} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={800} fill="#D8501F">
         {(display || '-').slice(0, 4)}
       </text>
     </g>
@@ -120,7 +124,7 @@ function PointGlyph({ mp, display, selected }: { mp: MoisturePoint; display: str
 // cased opening, which is a different thing and a different quantity. It is marked
 // with a dashed line showing the absence, deducts full ceiling height from wall
 // area, and leaves no baseboard.
-function OpeningGlyph({ scene, op, selected }: { scene: Scene; op: Opening; selected?: boolean }) {
+function OpeningGlyph({ scene, op, selected, rot }: { scene: Scene; op: Opening; selected?: boolean; rot?: number }) {
   const w = wallById(scene, op.wallId); if (!w) return null;
   const { A, B, dir, nrm, center, gapLen } = openingGeom(w, op);
   const h = WALL_W / 2 + 1.5;
@@ -153,7 +157,9 @@ function OpeningGlyph({ scene, op, selected }: { scene: Scene; op: Opening; sele
       {isMissing && (
         <>
           <line x1={A[0]} y1={A[1]} x2={B[0]} y2={B[1]} stroke="#94a3b8" strokeWidth={2.5} strokeDasharray="6 6" />
-          <text x={center[0] + nrm[0] * 20} y={center[1] + nrm[1] * 20} textAnchor="middle" dominantBaseline="central"
+          <text x={center[0] + nrm[0] * 20} y={center[1] + nrm[1] * 20}
+                transform={upright(rot, center[0] + nrm[0] * 20, center[1] + nrm[1] * 20)}
+                textAnchor="middle" dominantBaseline="central"
                 fontSize={11} fontWeight={700} fill="#94a3b8" stroke="#fff" strokeWidth={3} paintOrder="stroke">missing wall</text>
         </>
       )}
@@ -164,15 +170,15 @@ function OpeningGlyph({ scene, op, selected }: { scene: Scene; op: Opening; sele
 
 // Shared read-only renderer. `activeDate` selects which visit's value each pin
 // shows; omit it (thumbnails / report) to show the latest known reading.
-export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
-  { scene: Scene; currentWall?: Pt[]; selectedId?: string | null; activeDate?: string }) {
+export function SceneLayers({ scene, currentWall, selectedId, activeDate, rot }:
+  { scene: Scene; currentWall?: Pt[]; selectedId?: string | null; activeDate?: string; rot?: number }) {
   return (
     <g>
       {/* floor fills sit beneath the wet areas so the walls read correctly on top */}
       {scene.walls.map(p => (
         <polygon key={'floor-' + p.id} points={ptsStr(p.points)} fill="#f4f7fb" />
       ))}
-      {scene.walls.map(p => <WallBand key={p.id} w={p} />)}
+      {scene.walls.map(p => <WallBand key={p.id} w={p} rot={rot} />)}
       {scene.wetAreas.map(p => {
         const strokes = p.strokes ?? (p.points.length ? [p.points] : []);
         const allPts = strokes.flat();
@@ -183,7 +189,7 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
             {p.brush
               ? strokes.map((st, i) => <polyline key={i} points={ptsStr(st)} fill="none" stroke="#7DD3FC" strokeOpacity={0.55} strokeWidth={p.brush} strokeLinecap="round" strokeLinejoin="round" />)
               : <path d={smoothClosedPath(p.points)} fill="#7DD3FC" fillOpacity={0.5} stroke="#0284c7" strokeWidth={3} strokeLinejoin="round" />}
-            {lbl && <text x={c[0]} y={c[1]} textAnchor="middle" dominantBaseline="central" fontSize={13} fontWeight={700} fill="#075985" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lbl}</text>}
+            {lbl && <text x={c[0]} y={c[1]} transform={upright(rot, c[0], c[1])} textAnchor="middle" dominantBaseline="central" fontSize={13} fontWeight={700} fill="#075985" stroke="#fff" strokeWidth={4} paintOrder="stroke">{lbl}</text>}
           </g>
         );
       })}
@@ -192,7 +198,7 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
         const ep = edgePoints(scene, w.id, ei); if (!ep) return null;
         const nrm = edgeInwardNormal(scene, w.id, ei);
         const mx = (ep[0][0] + ep[1][0]) / 2 + nrm[0] * 16, my = (ep[0][1] + ep[1][1]) / 2 + nrm[1] * 16;
-        return <text key={w.id + '-wl-' + ei} x={mx} y={my} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#64748B" stroke="#fff" strokeWidth={3} paintOrder="stroke">{ei + 1}</text>;
+        return <text key={w.id + '-wl-' + ei} x={mx} y={my} transform={upright(rot, mx, my)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#64748B" stroke="#fff" strokeWidth={3} paintOrder="stroke">{ei + 1}</text>;
       }))}
       {scene.originOfLoss && (
         <g transform={`translate(${scene.originOfLoss[0]},${scene.originOfLoss[1]})`}>
@@ -201,9 +207,9 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
           <line x1={6} y1={-6} x2={-6} y2={6} stroke="#DC2626" strokeWidth={3.5} strokeLinecap="round" />
         </g>
       )}
-      {(scene.openings ?? []).map(op => <OpeningGlyph key={op.id} scene={scene} op={op} selected={op.id === selectedId} />)}
-      {(scene.floodCuts ?? []).map((fc, i) => <FloodCutBand key={'fc' + i} scene={scene} fc={fc} />)}
-      {(scene.containments ?? []).map(c => <ContainmentBar key={c.id} c={c} selected={c.id === selectedId} />)}
+      {(scene.openings ?? []).map(op => <OpeningGlyph key={op.id} scene={scene} op={op} selected={op.id === selectedId} rot={rot} />)}
+      {(scene.floodCuts ?? []).map((fc, i) => <FloodCutBand key={'fc' + i} scene={scene} fc={fc} rot={rot} />)}
+      {(scene.containments ?? []).map(c => <ContainmentBar key={c.id} c={c} selected={c.id === selectedId} rot={rot} />)}
       {(scene.arrows ?? []).map(a => <ArrowGlyph key={a.id} a={a} selected={a.id === selectedId} />)}
       {currentWall && currentWall.length > 0 && (
         <>
@@ -214,7 +220,7 @@ export function SceneLayers({ scene, currentWall, selectedId, activeDate }:
         </>
       )}
       {(scene.moisturePoints ?? []).map(mp => (
-        <PointGlyph key={mp.id} mp={mp} display={pointDisplay(mp, activeDate)} selected={mp.id === selectedId} />
+        <PointGlyph key={mp.id} mp={mp} display={pointDisplay(mp, activeDate)} selected={mp.id === selectedId} rot={rot} />
       ))}
       {scene.equipment.map(eq => <EquipGlyph key={eq.id} eq={eq} selected={eq.id === selectedId} />)}
     </g>

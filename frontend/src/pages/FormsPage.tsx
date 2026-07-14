@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, FileSignature, CheckCircle2, X } from 'lucide-react';
+import { ChevronLeft, FileSignature, CheckCircle2, X, Download } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SignaturePad } from '../components/SignaturePad';
+
+const API = import.meta.env.VITE_API_URL;
 
 interface Claim {
   id: string; policyholder_name: string | null; address: string | null;
@@ -53,6 +55,7 @@ export default function FormsPage() {
   const [sigData, setSigData] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [justSigned, setJustSigned] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   async function load() {
     if (!claimId) return;
@@ -90,6 +93,42 @@ export default function FormsPage() {
     } finally { setSaving(false); }
   }
 
+  // Build (or fetch) the PDF of one signed form and download it.
+  //
+  // The backend renders the signature's doc_snapshot, which is frozen at signing time,
+  // so the same signatureId always yields the same PDF. It files the result as a
+  // resto_documents row and hands the same row back on every later request, which is
+  // why tapping this twice does not litter the Documents list with copies.
+  //
+  // The file itself is streamed from our own domain with the session token in ?t=,
+  // matching the Documents page: a plain navigation, never window.open after an await,
+  // because the mobile popup blocker kills that.
+  async function downloadSigned(s: Sig) {
+    if (!claimId) return;
+    if (!API) { alert('PDF service is not configured. Set VITE_API_URL in Vercel.'); return; }
+    setDownloading(s.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const t = session?.access_token;
+      if (!t) { alert('Please sign in again.'); return; }
+
+      const res = await fetch(`${API}/api/resto/form-pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+        body: JSON.stringify({ claimId, signatureId: s.id })
+      });
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok) throw new Error(json?.error || res.statusText);
+      if (!json?.document?.id) throw new Error('the form was built but not recorded');
+
+      const clean = String(json.document.title || 'Signed Form').replace(/[^\w.-]+/g, '_').replace(/_+/g, '_');
+      window.location.href =
+        `${window.location.origin}/api/resto/document/${json.document.id}/${clean}.pdf?t=${encodeURIComponent(t)}&download=1`;
+    } catch (e: any) {
+      alert('Could not build the signed PDF: ' + (e?.message ?? 'unknown error'));
+    } finally { setDownloading(null); }
+  }
+
   const doc = openType ? DOCS.find(d => d.type === openType) : null;
   const c = openType && claim ? clauses(openType, company, claim) : null;
 
@@ -123,7 +162,16 @@ export default function FormsPage() {
                 <div className="mt-3 border-t border-gray-100 pt-3">
                   {s.signature_data && <img src={s.signature_data} alt="signature" className="h-14" />}
                   <div className="text-xs text-gray-500 mt-1">Signed by {s.signer_name} on {new Date(s.signed_at).toLocaleDateString()}</div>
-                  <button onClick={() => open(d.type)} className="text-xs font-semibold text-sky mt-2">Re-sign</button>
+                  <div className="flex items-center gap-3 mt-3">
+                    <button onClick={() => void downloadSigned(s)} disabled={downloading === s.id}
+                            className="btn-soft flex-1 py-2.5 text-sm justify-center disabled:opacity-50">
+                      <Download size={15} /> {downloading === s.id ? 'Preparing…' : 'Download signed PDF'}
+                    </button>
+                    <button onClick={() => open(d.type)} className="text-xs font-semibold text-sky shrink-0 px-1">Re-sign</button>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+                    The PDF reproduces the terms exactly as they read when this was signed, and files itself under Documents.
+                  </p>
                 </div>
               ) : (
                 <button onClick={() => open(d.type)} className="btn-primary w-full py-2.5 mt-3 text-sm">Review & sign</button>

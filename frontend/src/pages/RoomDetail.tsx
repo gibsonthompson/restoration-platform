@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyNote } from 'lucide-react';
+import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyNote, Ruler, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SubHeader } from '../components/SubHeader';
@@ -18,6 +18,12 @@ interface MoldScan {
   indicators: string[]; recommend_lab_sampling: boolean; summary: string | null;
 }
 
+// resto_rooms.height_ft is the room's CEILING height, the same value the sketch editor
+// writes back on save. Widened locally so this compiles whether or not the shared Room
+// interface already carries it.
+type RoomRow = Room & { height_ft?: number | null };
+interface StructRow { id: string; name: string; default_ceiling_height_ft?: number | null; }
+
 // Verdict visual language for the mold screening result.
 const VERDICT: Record<string, { label: string; cls: string; dot: string }> = {
   mold_likely:   { label: 'Mold likely',   cls: 'bg-red-100 text-red-700',    dot: 'bg-red-500' },
@@ -29,9 +35,10 @@ const verdictMeta = (v?: string) => VERDICT[v ?? 'inconclusive'] ?? VERDICT.inco
 
 // Room workspace: four collections. Photos support a manual AI mold scan.
 export default function RoomDetail() {
-  const { claimId, roomId } = useParams();
+  const { claimId, structureId, roomId } = useParams();
   const { activeOrg } = useOrg();
-  const [room, setRoom] = useState<Room | null>(null);
+  const [room, setRoom] = useState<RoomRow | null>(null);
+  const [struct, setStruct] = useState<StructRow | null>(null);
   const [tab, setTab] = useState<Tab>('photos');
   const [notes, setNotes] = useState<Note[]>([]);
   const [noteEdit, setNoteEdit] = useState<{ id?: string; body: string } | null>(null);
@@ -42,6 +49,9 @@ export default function RoomDetail() {
   const [caption, setCaption] = useState('');
   const [scanning, setScanning] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [ceiling, setCeiling] = useState('');
+  const [savingCeiling, setSavingCeiling] = useState(false);
+  const [ceilingSaved, setCeilingSaved] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
 
@@ -74,13 +84,28 @@ export default function RoomDetail() {
     }
   }
 
-  useEffect(() => {
+  // The room, and the structure it hangs off, because the room's ceiling height falls
+  // back to the structure's default when it has none of its own.
+  async function loadRoom() {
     if (!roomId) return;
-    supabase.from('resto_rooms').select('*').eq('id', roomId).single()
-      .then(({ data }) => setRoom(data as Room));
+    const { data } = await supabase.from('resto_rooms').select('*').eq('id', roomId).single();
+    const r = data as RoomRow;
+    setRoom(r);
+    setCeiling(r?.height_ft != null ? String(r.height_ft) : '');
+
+    const sid = structureId || (r as any)?.structure_id;
+    if (sid) {
+      const { data: s } = await supabase.from('resto_structures')
+        .select('id, name, default_ceiling_height_ft').eq('id', sid).single();
+      setStruct(s as StructRow);
+    }
+  }
+
+  useEffect(() => {
+    void loadRoom();
     void loadNotes();
     void loadMedia();
-  }, [roomId]);
+  }, [roomId, structureId]);
 
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const input = e.target;
@@ -105,6 +130,33 @@ export default function RoomDetail() {
       setUploading(false);
       input.value = '';
     }
+  }
+
+  // Wall area is (perimeter x ceiling height) minus every opening, so this number
+  // is on every drywall, paint, and insulation line for the room. Setting it here
+  // overrides the level default; clearing it hands the room back to that default.
+  // The sketch editor writes to the same column, so the two never disagree.
+  async function saveCeiling(raw: string) {
+    if (!roomId) return;
+    const text = raw.trim();
+    const value = text === '' ? null : Number(text);
+    if (value !== null && (!Number.isFinite(value) || value <= 0 || value > 30)) {
+      alert('Enter a ceiling height in feet, between 1 and 30. Use a decimal for inches: 7 ft 8 in is 7.67.');
+      return;
+    }
+    const current = room?.height_ft ?? null;
+    if (value === current) return;
+
+    setSavingCeiling(true);
+    try {
+      const { error } = await supabase.from('resto_rooms')
+        .update({ height_ft: value }).eq('id', roomId);
+      if (error) { alert('Could not save the ceiling height: ' + error.message); return; }
+      setRoom(r => (r ? { ...r, height_ft: value } : r));
+      setCeiling(value == null ? '' : String(value));
+      setCeilingSaved(true);
+      setTimeout(() => setCeilingSaved(false), 2000);
+    } finally { setSavingCeiling(false); }
   }
 
   // Keep the viewer's editable note in sync with whichever photo is open.
@@ -165,9 +217,61 @@ export default function RoomDetail() {
 
   const viewerScan = viewer ? scans[viewer.id] : undefined;
 
+  const override = room.height_ft ?? null;
+  const inherited = struct?.default_ceiling_height_ft ?? null;
+  const effective = override ?? inherited;
+
   return (
     <div>
       <SubHeader title={room.name} />
+
+      {/* Ceiling height. Sits above the tabs because it belongs to the room itself,
+          not to any one collection inside it. */}
+      <div className="px-4 pt-3">
+        <div className="bg-white rounded-2xl shadow-soft px-3.5 py-3">
+          <div className="flex items-center gap-2.5">
+            <Ruler size={16} className="text-aqua-deep shrink-0" />
+            <div className="text-[13px] font-bold flex-1 flex items-center gap-1.5">
+              Ceiling height
+              {ceilingSaved && <Check size={14} className="text-green-600" />}
+            </div>
+            <div className="relative w-24">
+              <input
+                type="number" inputMode="decimal" step="0.25" min="1" max="30"
+                value={ceiling}
+                onChange={e => setCeiling(e.target.value)}
+                onBlur={e => void saveCeiling(e.target.value)}
+                placeholder={inherited != null ? String(inherited) : '8'}
+                disabled={savingCeiling}
+                className="w-full border border-gray-200 rounded-xl pl-3 pr-7 py-2 text-[16px] outline-none focus:border-sky disabled:opacity-60" />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-semibold">ft</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-[11px] text-gray-400 leading-snug flex-1">
+              {override != null
+                ? `This room is set to ${override} ft, overriding ${struct?.name ?? 'the level'}.`
+                : inherited != null
+                  ? `Using ${inherited} ft from ${struct?.name ?? 'the level'}. Type a number to override it for this room only.`
+                  : 'No height set here or on the level. Wall area will fall back to an assumed 8 ft, and the measurement sheet will say so.'}
+            </p>
+            {override != null && (
+              <button onClick={() => void saveCeiling('')} disabled={savingCeiling}
+                      className="text-[11px] font-semibold text-sky shrink-0 disabled:opacity-50">
+                Use level default
+              </button>
+            )}
+          </div>
+
+          {effective == null && (
+            <p className="text-[11px] text-amber-600 font-semibold mt-1.5 leading-snug">
+              An assumed height is an assumed dollar amount on every wall line. Measure it.
+            </p>
+          )}
+        </div>
+      </div>
+
       <div className="px-4 pt-3">
         <div className="flex gap-1 bg-white rounded-2xl p-1.5 shadow-soft">
           {tabs.map(t => (
@@ -246,7 +350,7 @@ export default function RoomDetail() {
         )}
 
         {tab === 'sketches' && activeOrg && claimId && roomId && (
-          <SketchesTab roomId={roomId} roomName={room?.name} claimId={claimId} orgId={activeOrg.id} />
+          <SketchesTab roomId={roomId} roomName={room?.name} claimId={claimId} orgId={activeOrg.id} structureId={structureId} />
         )}
       </div>
 

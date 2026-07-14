@@ -185,19 +185,36 @@ export function hitArrow(scene: Scene, x: number, y: number, r = 26): Arrow | nu
 }
 
 // ---- openings (doors / windows / cased openings / missing walls on wall edges) ----
-export const OPENING_DEFAULT_FT: Record<OpeningKind, number> = { door: 3, opening: 4, window: 3, missing_wall: 6 };
+//
+// These are XACTIMATE'S OWN DEFAULTS, not guesses. Decoded from the reference file's
+// SKETCHDOCUMENTPREFS, at 1524 internal units per foot:
+//   defDoorWidth   3810  = 2' 6"      defDoorHeight   10160 = 6' 8"
+//   defWindowWidth 4064  = 2' 8"      defWindowHeight  6096 = 4' 0"
+// Starting from the same defaults an estimator sees means a tech confirms a number
+// instead of correcting one.
+export const OPENING_DEFAULT_FT: Record<OpeningKind, number> = {
+  door: 2.5,                 // 2' 6"
+  window: 2 + 8 / 12,        // 2' 8"
+  opening: 4,                // a cased opening is wider; no Xactimate default, so a sane one
+  missing_wall: 6
+};
 
-// STANDARD heights, in feet. These are used ONLY as the starting value in the capture
-// sheet, never as a silent substitute for a measurement. missing_wall is null because
-// a missing wall is full ceiling height by definition.
-//   door   6' 8"  (the standard interior door)
-//   window 4' 0"
-//   opening 6' 8" (cased opening / archway)
+// Starting HEIGHTS. Used ONLY as the value the capture sheet opens on, never as a
+// silent substitute for a measurement. missing_wall is null because a missing wall is
+// full ceiling height by definition.
 export const OPENING_DEFAULT_HEIGHT_FT: Record<OpeningKind, number | null> = {
-  door: 6 + 8 / 12,
-  window: 4,
+  door: 6 + 8 / 12,          // 6' 8", Xactimate's default door
+  window: 4,                 // 4' 0", Xactimate's default window
   opening: 6 + 8 / 12,
   missing_wall: null
+};
+
+// Plain-English descriptions. A tech should never have to guess what a term means.
+export const OPENING_DESC: Record<OpeningKind, string> = {
+  door: 'A normal door in a wall.',
+  window: 'A window. Baseboard runs underneath it, so it does not interrupt the trim.',
+  opening: 'A doorway with no door in it: an archway or a squared-off gap between two rooms. The wall and its frame are still there, so it has jambs.',
+  missing_wall: 'No wall at all between two rooms. Deducts the full height of the wall, and there is no baseboard across it.'
 };
 
 // Openings you can walk through interrupt baseboard. A WINDOW does not, because

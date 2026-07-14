@@ -1,24 +1,39 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Undo2, Save, Move, Square, Droplet, Grid3x3, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown } from 'lucide-react';
+import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import { RoomDimensions } from './RoomDimensions';
 import { MeasureSheet } from './MeasureSheet';
 import { formatFeetInches } from '../../lib/feetInches';
+import { viewTransform, screenToScene, panDelta, normRot, type View as VView } from './viewTransform';
 import {
   type FloodCut,
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
   sceneFloorSqFt, suggestEquipment, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, edgeLenFt, floodCutEnds, projectToEdgeFt,
   setEdgeLengthFt, polyEdgeLenFt, roomDimensions, roomBBoxFt, openingHeightFt,
-  FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, OPENING_DEFAULT_HEIGHT_FT, OPENING_LABEL, SCENE_SIZE, UNITS_PER_FT, EQUIP_META,
+  FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, OPENING_DEFAULT_HEIGHT_FT, OPENING_LABEL, OPENING_DESC, SCENE_SIZE, UNITS_PER_FT, EQUIP_META,
   type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
 type RoomMode = 'rect' | 'poly';
 type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle' | 'floodMove';
-interface View { tx: number; ty: number; k: number; }
 interface SketchRow { id: string; canvas_json: any; }
+
+// An opening being measured. It is NOT in the scene yet, and that is the point.
+//
+// This used to write the opening with OPENING_DEFAULT_FT and OPENING_DEFAULT_HEIGHT_FT
+// the instant it was dropped, and only THEN ask for the real numbers. Cancel the sheet
+// and a 2 ft 6 in x 6 ft 8 in door nobody measured stayed on the wall with heightFt set,
+// which makes openingHeightFt return assumed:false. So roomDimensions printed no warning,
+// the "Sizes assumed" chip never lit, and an invented deduction went out on a carrier
+// document as a measured fact. Nothing is written now until both numbers are real.
+interface OpeningDraft {
+  wallId: string; edge: number; t: number; kind: OpeningKind;
+  edgeLenFt: number; widthFt: number; heightFt?: number;
+  step: 'width' | 'height';
+  id?: string;   // set when RE-MEASURING an opening that is already on the wall
+}
 
 const PLACE_SET: Tool[] = ['equip', 'reading', 'origin'];
 const GRID = 40;            // scene units per grid square (1 ft)
@@ -98,11 +113,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [rdgMaterial, setRdgMaterial] = useState<string | undefined>(undefined);
   const [rdgLabel, setRdgLabel] = useState('');
   const [lastPlace, setLastPlace] = useState<Tool>('equip');
-  const [showGrid, setShowGrid] = useState(true);
   const [activeDate, setActiveDate] = useState<string>(todayISO());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [view, setView] = useState<View>({ tx: 0, ty: 0, k: 1 });
+  const [view, setView] = useState<VView>({ tx: 0, ty: 0, k: 1, rot: 0 });
   const [draft, setDraft] = useState<{ kind: 'rect'; a: Pt; b: Pt } | { kind: 'wet'; pts: Pt[] } | { kind: 'arrow'; from: Pt; to: Pt } | { kind: 'poly'; pts: Pt[] } | null>(null);
   const [active, setActive] = useState<{ scene: Pt; px: Pt } | null>(null);
   const [guide, setGuide] = useState<{ x?: number; y?: number } | null>(null);
@@ -115,8 +129,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [selEdge, setSelEdge] = useState<{ wallId: string; edge: number } | null>(null);
   const [edgeSheet, setEdgeSheet] = useState<{ wallId: string; edge: number; currentFt: number } | null>(null);
   const [ceilSheet, setCeilSheet] = useState(false);
-  const [openingSheet, setOpeningSheet] = useState<{ id: string; kind: OpeningKind; step: 'width' | 'height' } | null>(null);
+  const [openingSheet, setOpeningSheet] = useState<OpeningDraft | null>(null);
   const [showDims, setShowDims] = useState(false);
+  const [confirmExit, setConfirmExit] = useState(false);
+  // Any edit at all marks the sketch dirty. Closing without saving is how a tech loses
+  // an hour of work in a wet house, so we ask rather than silently discard.
+  const [dirty, setDirty] = useState(false);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -155,7 +173,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   useEffect(() => {
     if (inited.current || !size.w || !size.h) return;
     const k = (Math.min(size.w, size.h) * 0.9) / SCENE_SIZE;
-    setView({ k, tx: (size.w - SCENE_SIZE * k) / 2, ty: (size.h - SCENE_SIZE * k) / 2 });
+    setView({ k, rot: 0, tx: (size.w - SCENE_SIZE * k) / 2, ty: (size.h - SCENE_SIZE * k) / 2 });
     inited.current = true;
   }, [size]);
 
@@ -166,7 +184,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const r = p.matrixTransform(ctm.inverse());
     return [r.x, r.y];
   }
-  function pxToScene([px, py]: Pt): Pt { const v = viewRef.current; return [(px - v.tx) / v.k, (py - v.ty) / v.k]; }
+  // Un-rotates as well as un-scales. Without this, every tap lands somewhere the tech
+  // never touched the moment the canvas is turned.
+  function pxToScene(p: Pt): Pt { return screenToScene(p, viewRef.current, size.w, size.h); }
 
   // Snap to the INCH now, not the foot. A typed value still overrides it exactly.
   function snapPoint(raw: Pt, exclude?: { id: string; idx: number }): { p: Pt; gx?: number; gy?: number } {
@@ -208,7 +228,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     return null;
   }
 
-  function snapshot() { setHistory(h => [...h.slice(-29), scene]); }
+  function snapshot() { setHistory(h => [...h.slice(-29), scene]); setDirty(true); }
   function undo() { setHistory(h => { if (!h.length) return h; setScene(h[h.length - 1]); setSelectedId(null); setSelEdge(null); return h.slice(0, -1); }); }
 
   // ---- TYPE AN EXACT WALL LENGTH -------------------------------------------
@@ -313,7 +333,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const pxO = toPixel(e.clientX - OFF, e.clientY - OFF); const sO = pxToScene(pxO);
     const gb = g.current.grab;
 
-    if (g.current.kind === 'pan') { setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); }
+    if (g.current.kind === 'pan') { const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); }
     else if (g.current.kind === 'rect') { const p = showActive(pxToScene(px), px); setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d)); }
     else if (g.current.kind === 'arrow') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'arrow' ? { ...d, to: p } : d)); }
     else if (g.current.kind === 'handle' && g.current.id != null) {
@@ -339,8 +359,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         return { ...d, pts: [...d.pts, fp] };
       });
     }
-    else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } else { showActive(sO, pxO); } }
-    else if (g.current.kind === 'floodTap' || g.current.kind === 'containTap') { if (g.current.moved) { g.current.kind = 'pan'; setView(v => ({ ...v, tx: v.tx + dx, ty: v.ty + dy })); } }
+    else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); } else { showActive(sO, pxO); } }
+    else if (g.current.kind === 'floodTap' || g.current.kind === 'containTap') { if (g.current.moved) { g.current.kind = 'pan'; const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); } }
     else if (g.current.kind === 'floodHandle' && selectedFlood) {
       showActive(sO, pxO);
       const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
@@ -445,7 +465,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const k = clampK(v.k * (dist / (pv.dist || dist))); const f = k / v.k;
     let tx = cx - (cx - v.tx) * f, ty = cy - (cy - v.ty) * f;
     tx += cx - pv.cx; ty += cy - pv.cy;
-    setView({ tx, ty, k }); pinch.current = { dist, cx, cy };
+    setView(vv => ({ ...vv, tx, ty, k })); pinch.current = { dist, cx, cy };
   }
 
   function deleteSelected() {
@@ -503,8 +523,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     setDraft(d => (d?.kind === 'poly' ? (d.pts.length <= 1 ? null : { kind: 'poly', pts: d.pts.slice(0, -1) }) : d));
   }
 
-  // Placing an opening now CAPTURES its size. An opening's height is a measurement
-  // that deducts real square feet from the wall, so it is asked for, not assumed.
+  // Placing an opening OPENS THE MEASUREMENT SHEET. It does not write anything yet.
+  // The old order (write with defaults, then ask) meant a cancelled sheet left a door
+  // on the wall with an invented height that openingHeightFt reported as measured.
   function commitPlace(p: Pt, editId?: string) {
     if (tool === 'origin') {
       snapshot();
@@ -515,15 +536,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     } else if (tool === 'door') {
       const near = nearestWallEdge(scene, p[0], p[1]);
       if (near && near.dist < 45 && near.edgeLen > UNITS_PER_FT) {
-        const widthFt = OPENING_DEFAULT_FT[doorKind];
-        const halfFrac = Math.min(0.45, (widthFt * UNITS_PER_FT / 2) / near.edgeLen);
-        const t = Math.max(halfFrac, Math.min(1 - halfFrac, near.t));
-        snapshot();
-        const id = uid();
-        const defH = OPENING_DEFAULT_HEIGHT_FT[doorKind];
-        setScene(sc => ({ ...sc, openings: [...(sc.openings ?? []), { id, wallId: near.wallId, edge: near.edge, t, widthFt, heightFt: defH ?? undefined, kind: doorKind }] }));
-        // a missing wall is full ceiling height by definition: only ask for its width
-        setOpeningSheet({ id, kind: doorKind, step: 'width' });
+        setOpeningSheet({
+          wallId: near.wallId, edge: near.edge, t: near.t, kind: doorKind,
+          edgeLenFt: near.edgeLen / UNITS_PER_FT,
+          widthFt: OPENING_DEFAULT_FT[doorKind],
+          step: 'width'
+        });
       }
     } else if (tool === 'reading') {
       const cur = editId ? (scene.moisturePoints ?? []).find(m => m.id === editId) : null;
@@ -534,14 +552,37 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     }
   }
 
-  function setOpeningSize(field: 'widthFt' | 'heightFt', ft: number) {
-    if (!openingSheet) return;
-    const id = openingSheet.id;
-    setScene(sc => ({ ...sc, openings: (sc.openings ?? []).map(o => o.id === id ? { ...o, [field]: ft } : o) }));
-    if (field === 'widthFt') {
-      if (openingSheet.kind === 'missing_wall') setOpeningSheet(null);   // full ceiling height, no need to ask
-      else setOpeningSheet({ ...openingSheet, step: 'height' });
-    } else setOpeningSheet(null);
+  // The opening only enters the scene once its numbers are real. heightFt stays undefined
+  // for a missing wall, which is correct: openingHeightFt gives it the FULL ceiling height
+  // by definition, and calls it measured rather than assumed.
+  //
+  // With an id, this RE-MEASURES an opening already on the wall instead of adding another.
+  //
+  // t is clamped against the FINAL width in both paths. Clamping against the old width and
+  // then widening the opening to 3 ft could push it past the end of its own wall.
+  function commitOpening(d: OpeningDraft, heightFt?: number) {
+    snapshot();
+    setScene(sc => {
+      const clampT = (o: { wallId: string; edge: number; t: number }) => {
+        const w = sc.walls.find(x => x.id === o.wallId);
+        if (!w) return o.t;
+        const n = w.points.length;
+        const a = w.points[o.edge], b = w.points[(o.edge + 1) % n];
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const halfFrac = Math.min(0.45, (d.widthFt * UNITS_PER_FT / 2) / len);
+        return Math.max(halfFrac, Math.min(1 - halfFrac, o.t));
+      };
+      if (d.id) {
+        return {
+          ...sc,
+          openings: (sc.openings ?? []).map(o => o.id === d.id
+            ? { ...o, widthFt: d.widthFt, heightFt, t: clampT(o) }
+            : o)
+        };
+      }
+      const next = { id: uid(), wallId: d.wallId, edge: d.edge, t: d.t, widthFt: d.widthFt, heightFt, kind: d.kind };
+      return { ...sc, openings: [...(sc.openings ?? []), { ...next, t: clampT(next) }] };
+    });
   }
 
   function pointInWrap(x: number, y: number) {
@@ -582,12 +623,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   function zoomBy(factor: number) {
     const v = viewRef.current; const cx = size.w / 2, cy = size.h / 2;
     const k = clampK(v.k * factor); const f = k / v.k;
-    setView({ k, tx: cx - (cx - v.tx) * f, ty: cy - (cy - v.ty) * f });
+    setView(vv => ({ ...vv, k, tx: cx - (cx - v.tx) * f, ty: cy - (cy - v.ty) * f }));
   }
   function onWheel(e: React.WheelEvent) {
     const v = viewRef.current;
-    if (e.ctrlKey || e.metaKey) { const [fx, fy] = toPixel(e.clientX, e.clientY); const k = clampK(v.k * Math.pow(2, -e.deltaY * 0.01)); const f = k / v.k; setView({ k, tx: fx - (fx - v.tx) * f, ty: fy - (fy - v.ty) * f }); }
-    else setView({ ...v, tx: v.tx - e.deltaX, ty: v.ty - e.deltaY });
+    if (e.ctrlKey || e.metaKey) { const [fx, fy] = toPixel(e.clientX, e.clientY); const k = clampK(v.k * Math.pow(2, -e.deltaY * 0.01)); const f = k / v.k; setView({ ...v, k, tx: fx - (fx - v.tx) * f, ty: fy - (fy - v.ty) * f }); }
+    else { const [pdx, pdy] = panDelta([-e.deltaX, -e.deltaY], v); setView({ ...v, tx: v.tx + pdx, ty: v.ty + pdy }); }
   }
 
   // Saving now writes the room's real DIMENSIONS back to resto_rooms. Without this,
@@ -613,7 +654,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const k = view.k;
   const vMinX = -view.tx / k, vMinY = -view.ty / k, vMaxX = (size.w - view.tx) / k, vMaxY = (size.h - view.ty) / k;
   const gxs: number[] = [], gys: number[] = [];
-  if (showGrid && k > 0.015) {
+  if (k > 0.015) {
     for (let x = Math.floor(vMinX / GRID) * GRID; x <= vMaxX; x += GRID) gxs.push(x);
     for (let y = Math.floor(vMinY / GRID) * GRID; y <= vMaxY; y += GRID) gys.push(y);
   }
@@ -680,6 +721,24 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   })() : null;
 
+  // An opening already on the wall, selected in Move mode. Mis-measuring a door is normal,
+  // and the fix should not be "delete it and drag a new one onto the right wall again".
+  const selOpen = selectedId ? (scene.openings ?? []).find(o => o.id === selectedId) ?? null : null;
+  const selOpenSize = !selOpen ? ''
+    : selOpen.kind === 'missing_wall' ? `${formatFeetInches(selOpen.widthFt)} wide, full height`
+    : selOpen.heightFt ? `${formatFeetInches(selOpen.widthFt)} \u00d7 ${formatFeetInches(selOpen.heightFt)}`
+    : `${formatFeetInches(selOpen.widthFt)}, height not measured`;
+  function measureSelectedOpening() {
+    if (!selOpen) return;
+    setOpeningSheet({
+      id: selOpen.id,
+      wallId: selOpen.wallId, edge: selOpen.edge, t: selOpen.t, kind: selOpen.kind,
+      edgeLenFt: edgeLenFt(scene, selOpen.wallId, selOpen.edge),
+      widthFt: selOpen.widthFt, heightFt: selOpen.heightFt,
+      step: 'width'
+    });
+  }
+
   const content = (
     <>
       <g stroke="#DCE6F1" vectorEffect="non-scaling-stroke" strokeWidth={1}>
@@ -724,7 +783,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           </g>
         );
       })()}
-      <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} />
+      <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} rot={view.rot} />
 
       {/* EVERY WALL SHOWS ITS EXACT LENGTH in move mode. Tap one to type the real number. */}
       {tool === 'move' && scene.walls.map(w => w.points.map((_pt, ei) => {
@@ -737,7 +796,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         return (
           <g key={w.id + '-len-' + ei} style={{ pointerEvents: 'none' }}>
             {on && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#1483C2" strokeWidth={7 / k} strokeLinecap="round" opacity={0.55} />}
-            <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central"
+            <text x={mid[0]} y={mid[1]} transform={view.rot ? `rotate(${-view.rot} ${mid[0]} ${mid[1]})` : undefined}
+                  textAnchor="middle" dominantBaseline="central"
                   fontSize={(on ? 15 : 12) / k} fontWeight={on ? 900 : 700}
                   fill={on ? '#1483C2' : '#475569'} stroke="#fff" strokeWidth={4.5 / k} paintOrder="stroke">
               {formatFeetInches(len)}
@@ -815,28 +875,43 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   return (
     <div className="fixed inset-0 z-50 bg-[#F4F7FB] flex flex-col select-none">
       <div className="safe-top bg-white border-b border-gray-100 flex items-center px-2 pb-2 gap-1">
-        <button onClick={() => onClose(false)} className="p-2 rounded-xl active:bg-gray-100"><X size={22} /></button>
+        <button onClick={() => (dirty ? setConfirmExit(true) : onClose(false))} className="p-2 rounded-xl active:bg-gray-100"><X size={22} /></button>
         <div className="flex-1 text-center px-1 min-w-0">
           <div className="font-display font-bold text-[15px] truncate">{roomName || 'Moisture Map'}</div>
           {roomName && <div className="text-[10px] font-semibold text-gray-400 -mt-0.5">Moisture Map</div>}
         </div>
-        <button onClick={() => setShowDims(true)} className="p-2 rounded-xl active:bg-gray-100 text-sky"><Ruler size={20} /></button>
-        <button onClick={() => setShowGrid(v => !v)} className={`p-2 rounded-xl active:bg-gray-100 ${showGrid ? 'text-sky' : 'text-gray-400'}`}><Grid3x3 size={20} /></button>
         <button onClick={undo} disabled={!history.length} className="p-2 rounded-xl active:bg-gray-100 disabled:opacity-30"><Undo2 size={20} /></button>
         <button onClick={save} disabled={saving} className="ml-1 btn-primary py-2 px-4 text-sm disabled:opacity-50"><Save size={16} /> Save</button>
       </div>
 
-      {/* MEASUREMENT BAR: the numbers that pay for the job, always visible */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border-b border-gray-100 overflow-x-auto text-[11px]">
-        <button onClick={() => setCeilSheet(true)}
-          className={`shrink-0 chip ${ceilingFt ? 'bg-sky-soft text-sky-deep' : 'bg-amber-100 text-amber-700'}`}>
-          <ArrowUpDown size={11} /> {ceilingFt ? formatFeetInches(ceilingFt) : 'Set ceiling'}
-        </button>
-        {dims.F > 0 && <span className="shrink-0 chip bg-gray-100 text-gray-600">{dims.F} SF floor</span>}
-        {dims.F > 0 && <span className="shrink-0 chip bg-gray-100 text-gray-600">{dims.W} SF wall</span>}
-        {dims.F > 0 && <span className="shrink-0 chip bg-gray-100 text-gray-600">{dims.baseboardLF} LF base</span>}
-        {dims.openings.some(o => o.assumedHeight) && <span className="shrink-0 chip bg-amber-100 text-amber-700">opening size assumed</span>}
-      </div>
+      {/* MEASUREMENTS: the numbers that pay for the job. This is the most important
+          thing on the screen, so it is a full-width button, not an icon in a toolbar. */}
+      <button onClick={() => setShowDims(true)}
+        className="flex items-center gap-3 px-3 py-2.5 bg-white border-b border-gray-100 active:bg-gray-50 text-left w-full">
+        <div className="w-9 h-9 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center shrink-0"><Ruler size={17} /></div>
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-[13px] text-navy">Measurements</div>
+          <div className="text-[11px] text-gray-500 leading-snug tabular-nums truncate">
+            {dims.F > 0
+              ? <>Floor {dims.F} sq ft &middot; Walls {dims.W} sq ft &middot; Baseboard {dims.baseboardLF} ft</>
+              : 'Draw the room to see its measurements'}
+          </div>
+        </div>
+        {(!ceilingFt || dims.openings.some(o => o.assumedHeight)) && (
+          <span className="chip bg-amber-100 text-amber-700 shrink-0">
+            <TriangleAlert size={11} /> {!ceilingFt ? 'No ceiling height' : 'Sizes assumed'}
+          </span>
+        )}
+      </button>
+
+      {/* ceiling height sits on its own row: nothing below can be computed without it */}
+      <button onClick={() => setCeilSheet(true)}
+        className="flex items-center justify-between px-3 py-1.5 bg-white border-b border-gray-100 active:bg-gray-50 w-full">
+        <span className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500"><ArrowUpDown size={13} /> Ceiling height</span>
+        <span className={`text-[13px] font-bold ${ceilingFt ? 'text-navy' : 'text-amber-700'}`}>
+          {ceilingFt ? formatFeetInches(ceilingFt) : 'Tap to measure'}
+        </span>
+      </button>
 
       <div className="flex items-center justify-around px-3 py-2 bg-white/70 text-[13px] font-bold text-gray-600">
         {([['air_mover', counts.am], ['dehumidifier', counts.dh], ['air_scrubber', counts.as], ['reading', counts.mp]] as [string, number][]).map(([kk, n]) => (
@@ -877,7 +952,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         <svg ref={svgRef} className="w-full h-full touch-none" viewBox={`0 0 ${size.w || 1} ${size.h || 1}`}
              onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
           <rect x={0} y={0} width={size.w} height={size.h} fill="#F4F7FB" />
-          <g transform={`translate(${view.tx} ${view.ty}) scale(${k})`}>
+          <g transform={viewTransform(view, size.w, size.h)}>
             {content}
             {isCustom && chScene && (
               <g style={{ pointerEvents: 'none' }}>
@@ -916,6 +991,16 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
+          {/* Turn the plan to face the way you are standing. Tap to rotate, hold-free
+              double tap on the compass to snap back to north. */}
+          <button onClick={() => setView(v => ({ ...v, rot: normRot(v.rot + 90) }))}
+            className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 text-navy"><RotateCw size={18} /></button>
+          {view.rot !== 0 && (
+            <button onClick={() => setView(v => ({ ...v, rot: 0 }))}
+              className="bg-navy text-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95">
+              <Compass size={18} style={{ transform: `rotate(${-view.rot}deg)` }} />
+            </button>
+          )}
           <button onClick={() => zoomBy(1.25)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Plus size={18} /></button>
           <button onClick={() => zoomBy(0.8)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Minus size={18} /></button>
         </div>
@@ -929,7 +1014,20 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             </button>
           </div>
         )}
-        {tool === 'move' && !selEdge && selectedId && (
+        {tool === 'move' && !selEdge && selOpen && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
+            <button onClick={measureSelectedOpening}
+              className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-5 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2 min-w-0">
+              <Ruler size={16} className="shrink-0" />
+              <span className="truncate">{OPENING_LABEL[selOpen.kind]} {selOpenSize}</span>
+            </button>
+            <button onClick={deleteSelected}
+              className="bg-red-600 text-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 shrink-0">
+              <Trash2 size={16} />
+            </button>
+          </div>
+        )}
+        {tool === 'move' && !selEdge && selectedId && !selOpen && (
           <button onClick={deleteSelected} className="absolute left-3 bottom-3 bg-red-600 text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><Trash2 size={16} /> Delete</button>
         )}
         {tool === 'wet' && activeWetId && (
@@ -1015,7 +1113,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : 'Tap a WALL to set its exact length. Drag a corner to reshape. Drag items to move.')}
+        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it.' : 'Tap a WALL to set its exact length, or an OPENING to re-measure it. Drag a corner to reshape.')}
         {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Set exact lengths after, in Move.' : 'Drag a rough box, then switch to Move and type each wall\u2019s exact length.')}
         {tool === 'wet' && (activeWetId ? 'Keep painting the wet spot, then tap Done. Two fingers to pan.' : 'Paint over the wet spots. Lift and paint more; tap Done to finish.')}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
@@ -1067,22 +1165,38 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         />
       )}
       {openingSheet && (() => {
-        const op = (scene.openings ?? []).find(o => o.id === openingSheet.id);
-        if (!op) return null;
         const isW = openingSheet.step === 'width';
+        const kind = openingSheet.kind;
+        const twoStep = kind !== 'missing_wall';   // a missing wall is full ceiling height, so width only
+        const maxW = Math.round(openingSheet.edgeLenFt * 100) / 100;   // never wider than its own wall
+        const maxH = ceilingFt ?? 12;                                   // never taller than the wall it sits in
+        // Quick chips start from XACTIMATE'S OWN DEFAULTS (door 2'6" x 6'8", window
+        // 2'8" x 4'0", decoded from the reference file), so a tech confirms a number
+        // rather than correcting one. Anything that will not fit is filtered out.
+        const widthQuick = (kind === 'door' ? [{ label: "2' 6\"", ft: 2.5 }, { label: "2' 8\"", ft: 2 + 8 / 12 }, { label: "3'", ft: 3 }]
+          : kind === 'window' ? [{ label: "2' 8\"", ft: 2 + 8 / 12 }, { label: "3'", ft: 3 }, { label: "4'", ft: 4 }]
+          : [{ label: "3'", ft: 3 }, { label: "4'", ft: 4 }, { label: "6'", ft: 6 }]).filter(q => q.ft <= maxW);
+        const heightQuick = (kind === 'window'
+          ? [{ label: "4'", ft: 4 }, { label: "3'", ft: 3 }, { label: "5'", ft: 5 }]
+          : [{ label: "6' 8\"", ft: 6 + 8 / 12 }, { label: "7'", ft: 7 }, { label: "8'", ft: 8 }]).filter(q => q.ft <= maxH);
         return (
           <MeasureSheet
-            title={`${OPENING_LABEL[openingSheet.kind]} ${isW ? 'width' : 'height'}`}
+            title={isW ? `How wide is the ${OPENING_LABEL[kind].toLowerCase()}?` : `How tall is the ${OPENING_LABEL[kind].toLowerCase()}?`}
             subtitle={isW
-              ? 'Measure it. This is deducted from the wall area you bill.'
-              : openingSheet.kind === 'missing_wall' ? 'Full ceiling height.' : 'Measure it. A guessed height is a guessed dollar amount.'}
-            initialFt={isW ? op.widthFt : (op.heightFt ?? undefined)}
-            min={0.5} max={isW ? 60 : (ceilingFt ?? 12)}
-            quick={isW
-              ? [{ label: "2' 6\"", ft: 2.5 }, { label: "3'", ft: 3 }, { label: "6'", ft: 6 }]
-              : [{ label: "6' 8\"", ft: 6 + 8 / 12 }, { label: "4'", ft: 4 }, { label: "7'", ft: 7 }]}
+              ? 'This gets taken out of the wall area you bill for.'
+              : 'Measure it. A guessed height is a guessed dollar amount.'}
+            note={isW ? OPENING_DESC[kind] : undefined}
+            step={twoStep ? { current: isW ? 1 : 2, total: 2 } : undefined}
+            initialFt={isW ? openingSheet.widthFt : (openingSheet.heightFt ?? OPENING_DEFAULT_HEIGHT_FT[kind])}
+            min={0.5} max={isW ? maxW : maxH}
+            quick={isW ? widthQuick : heightQuick}
+            onBack={!isW ? () => setOpeningSheet(s => (s ? { ...s, step: 'width' } : s)) : undefined}
             onCancel={() => setOpeningSheet(null)}
-            onSave={(ft) => setOpeningSize(isW ? 'widthFt' : 'heightFt', ft)}
+            onSave={(ft) => {
+              if (!isW) { commitOpening(openingSheet, ft); setOpeningSheet(null); return; }
+              if (kind === 'missing_wall') { commitOpening({ ...openingSheet, widthFt: ft }); setOpeningSheet(null); return; }
+              setOpeningSheet(s => (s ? { ...s, widthFt: ft, step: 'height' } : s));
+            }}
           />
         );
       })()}
@@ -1243,6 +1357,31 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           </div>
         );
       })()}
+
+      {/* Closing without saving loses everything drawn. Ask. */}
+      {confirmExit && (
+        <div className="fixed inset-0 z-[75] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12vh)' }}>
+          <div className="absolute inset-0 bg-navy/40" onClick={() => setConfirmExit(false)} />
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+            <div className="font-display font-bold text-lg text-navy">Save your changes?</div>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              You have unsaved work on this map. If you leave now it is gone.
+            </p>
+            <button onClick={async () => { setConfirmExit(false); await save(); }} disabled={saving}
+              className="btn-primary w-full py-3 justify-center mt-4 disabled:opacity-50">
+              {saving ? 'Saving...' : 'Save and close'}
+            </button>
+            <button onClick={() => { setConfirmExit(false); onClose(false); }}
+              className="w-full py-3 mt-2 rounded-xl font-semibold text-red-600 border border-red-200 active:bg-red-50">
+              Discard changes
+            </button>
+            <button onClick={() => setConfirmExit(false)}
+              className="w-full py-3 mt-2 rounded-xl font-semibold text-gray-600 active:bg-gray-50">
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
 
       {paletteGhost && !paletteGhost.over && (
         <div className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-1/2 opacity-80 drop-shadow-lg"
