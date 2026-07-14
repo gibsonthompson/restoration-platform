@@ -349,3 +349,191 @@ export function projectToEdgeFt(scene: Scene, wallId: string, edge: number, pt: 
   const t = ((pt[0] - a[0]) * dx + (pt[1] - a[1]) * dy) / full2;
   return Math.max(0, Math.min(1, t)) * Math.sqrt(full2) / UNITS_PER_FT;
 }
+
+// ============================================================================
+// ROOM DIMENSION VARIABLES (Xactimate's own model), frontend twin of
+// resto-scope-quantities.roomDimensions. A parity test compares the two.
+// ----------------------------------------------------------------------------
+//   F  = floor SF          C  = ceiling SF (FLAT ceiling: C = F)
+//   SY = floor sq YARDS    = F / 9
+//   PF = floor perimeter   PC = ceiling perimeter (= PF)
+//   SH = ceiling height
+//   W  = (PF x SH) - SUM(opening width x opening HEIGHT)     <-- WALL SF
+//   WC = W + C
+//
+// Confirmed against a real Xactimate file whose 12x12 room reports
+// C=144; F=144; SY=16; PC=48; PF=48; SH=7.667; W=368; WC=512.
+//
+// Baseboard runs the perimeter, interrupted by anything you can walk through (a
+// door, a cased opening, a missing wall). A WINDOW does not interrupt it, because
+// baseboard runs underneath a window.
+//
+// FLAT CEILINGS ONLY. C = F is false for a vaulted ceiling. Stated so nobody later
+// assumes it was handled.
+// ============================================================================
+export interface RoomDims {
+  F: number; C: number; SY: number; PF: number; PC: number; SH: number; W: number; WC: number;
+  grossWallSF: number; openingDeductSF: number; baseboardLF: number;
+  openings: { id: string; kind: OpeningKind; widthFt: number; heightFt: number; sqft: number; assumedHeight: boolean }[];
+  warnings: string[];
+  assumedCeiling: boolean;
+}
+
+const r2n = (n: number) => Math.round(n * 100) / 100;
+
+// The largest wall polygon = the room outline.
+export function roomOutlinePoly(scene: Scene): Poly | null {
+  let best: Poly | null = null, bestArea = 0;
+  for (const w of scene.walls ?? []) {
+    if (!w.points || w.points.length < 3) continue;
+    const a = polygonArea(w.points);
+    if (a > bestArea) { bestArea = a; best = w; }
+  }
+  return best;
+}
+
+export function roomDimensions(scene: Scene, ceilingHeightFt?: number | null): RoomDims {
+  const warnings: string[] = [];
+  const hasCeiling = Number(ceilingHeightFt) > 0;
+  const SH = hasCeiling ? Number(ceilingHeightFt) : 8;
+  if (!hasCeiling) warnings.push('No ceiling height measured. Wall area assumes an 8 ft ceiling.');
+
+  const poly = roomOutlinePoly(scene);
+  if (!poly) {
+    warnings.push('Draw the room outline to get dimensions.');
+    return { F: 0, C: 0, SY: 0, PF: 0, PC: 0, SH, W: 0, WC: 0, grossWallSF: 0, openingDeductSF: 0, baseboardLF: 0, openings: [], warnings, assumedCeiling: !hasCeiling };
+  }
+
+  const u2 = UNITS_PER_FT * UNITS_PER_FT;
+  const Fraw = polygonArea(poly.points) / u2;
+  let per = 0;
+  for (let i = 0; i < poly.points.length; i++) {
+    const [x1, y1] = poly.points[i], [x2, y2] = poly.points[(i + 1) % poly.points.length];
+    per += Math.hypot(x2 - x1, y2 - y1);
+  }
+  const PFraw = per / UNITS_PER_FT;
+
+  // openings on this room, with their measured (or assumed) sizes
+  const wmap: Record<string, Poly> = {};
+  (scene.walls ?? []).forEach(w => { wmap[w.id] = w; });
+  const openings: RoomDims['openings'] = [];
+  for (const op of scene.openings ?? []) {
+    const w = wmap[op.wallId]; if (!w) continue;
+    const edgeFt = edgeLenFt(scene, op.wallId, op.edge);
+    let widthFt = op.widthFt != null ? op.widthFt : OPENING_DEFAULT_FT[op.kind];
+    widthFt = Math.max(0, Math.min(widthFt, edgeFt || widthFt));       // never wider than its wall
+    const { heightFt, assumed } = openingHeightFt(op, SH);
+    openings.push({
+      id: op.id, kind: op.kind, widthFt: r2n(widthFt), heightFt: r2n(heightFt),
+      sqft: r2n(widthFt * heightFt), assumedHeight: assumed
+    });
+  }
+
+  // FULL precision internally; round only on output. Rounding the perimeter first and
+  // THEN multiplying by the ceiling height pushes the error straight into wall area,
+  // and wall area is what a paint line bills against.
+  const grossRaw = PFraw * SH;
+  const deductRaw = openings.reduce((a, o) => a + o.sqft, 0);
+  let Wraw = grossRaw - deductRaw;
+  if (Wraw < 0) { warnings.push('The openings are larger than the wall area. Check their sizes.'); Wraw = 0; }
+
+  const breakLF = openings.filter(o => OPENING_BREAKS_BASEBOARD[o.kind]).reduce((a, o) => a + o.widthFt, 0);
+  if (openings.some(o => o.assumedHeight)) {
+    warnings.push('Some openings have no measured height and are using a standard size.');
+  }
+
+  return {
+    F: r2n(Fraw), C: r2n(Fraw), SY: r2n(Fraw / 9),
+    PF: r2n(PFraw), PC: r2n(PFraw), SH,
+    W: r2n(Wraw), WC: r2n(Wraw + Fraw),
+    grossWallSF: r2n(grossRaw), openingDeductSF: r2n(deductRaw),
+    baseboardLF: r2n(Math.max(0, PFraw - breakLF)),
+    openings, warnings, assumedCeiling: !hasCeiling
+  };
+}
+
+// The room's overall bounding box in FEET, written back to resto_rooms so anything
+// reading room.length_ft / width_ft gets a real number instead of 0 x 0.
+export function roomBBoxFt(scene: Scene): { widthFt: number; lengthFt: number } {
+  const poly = roomOutlinePoly(scene);
+  if (!poly) return { widthFt: 0, lengthFt: 0 };
+  const xs = poly.points.map(p => p[0]), ys = poly.points.map(p => p[1]);
+  return {
+    widthFt: r2n((Math.max(...xs) - Math.min(...xs)) / UNITS_PER_FT),
+    lengthFt: r2n((Math.max(...ys) - Math.min(...ys)) / UNITS_PER_FT)
+  };
+}
+
+// ============================================================================
+// EXACT EDGE LENGTHS
+// ----------------------------------------------------------------------------
+// A dimension could only ever be set by DRAGGING, and you cannot drag 12 ft 7 in
+// with a fingertip. This is the fix: type the wall's real length and the geometry
+// updates to exactly that.
+//
+// The catch: changing one edge of a CLOSED polygon breaks closure. For a rectilinear
+// room (all corners square, which is almost every room) the fix is the one a builder
+// would give you: the PARALLEL PARTNER edge absorbs the change. Lengthen the north
+// wall and the south wall follows, because in a real rectangular room they ARE the
+// same measurement.
+//
+// If no partner exists (a genuinely angled room), we translate the downstream
+// vertices and let the closing edge take up the slack, and the caller is told, so
+// nothing silently deforms.
+// ============================================================================
+export function setEdgeLengthFt(pts: Pt[], edge: number, newLenFt: number): { points: Pt[]; exact: boolean } | null {
+  const n = pts.length;
+  if (n < 3 || edge < 0 || edge >= n || !(newLenFt > 0)) return null;
+
+  const vecs: Pt[] = [];
+  for (let i = 0; i < n; i++) vecs.push([pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]]);
+  const mag = (v: Pt) => Math.hypot(v[0], v[1]);
+
+  const oldLen = mag(vecs[edge]);
+  if (oldLen < 1e-6) return null;
+  const newLen = newLenFt * UNITS_PER_FT;
+  const delta = newLen - oldLen;
+  const d: Pt = [vecs[edge][0] / oldLen, vecs[edge][1] / oldLen];
+
+  // find an ANTIPARALLEL partner: the edge that runs back the other way. In a
+  // rectangle that is the opposite wall. Prefer the longest such edge.
+  let partner = -1, partnerLen = 0;
+  for (let i = 0; i < n; i++) {
+    if (i === edge) continue;
+    const L = mag(vecs[i]); if (L < 1e-6) continue;
+    const u: Pt = [vecs[i][0] / L, vecs[i][1] / L];
+    const dot = u[0] * d[0] + u[1] * d[1];
+    if (dot < -0.996 && L > partnerLen) { partner = i; partnerLen = L; }   // within ~5 degrees of opposite
+  }
+
+  const out = vecs.map(v => [v[0], v[1]] as Pt);
+  out[edge] = [d[0] * newLen, d[1] * newLen];
+
+  let exact = false;
+  if (partner >= 0) {
+    // the partner must grow by the same delta so the signed vectors still sum to zero
+    const L = mag(vecs[partner]);
+    const u: Pt = [vecs[partner][0] / L, vecs[partner][1] / L];
+    const pNew = L + delta;
+    if (pNew > UNITS_PER_FT * 0.25) {          // do not collapse a wall below 3 inches
+      out[partner] = [u[0] * pNew, u[1] * pNew];
+      exact = true;
+    }
+  }
+
+  // rebuild from the first vertex, walking the (possibly adjusted) edge vectors
+  const res: Pt[] = [[pts[0][0], pts[0][1]]];
+  for (let i = 0; i < n - 1; i++) {
+    const prev = res[i];
+    res.push([prev[0] + out[i][0], prev[1] + out[i][1]]);
+  }
+  return { points: res, exact };
+}
+
+// Length of one edge of a polygon, in feet.
+export function polyEdgeLenFt(pts: Pt[], edge: number): number {
+  const n = pts.length;
+  if (n < 2 || edge < 0 || edge >= n) return 0;
+  const a = pts[edge], b = pts[(edge + 1) % n];
+  return Math.hypot(b[0] - a[0], b[1] - a[1]) / UNITS_PER_FT;
+}
