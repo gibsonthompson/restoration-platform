@@ -7,6 +7,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from '../sketch/SceneLayers';
 import { MeasureSheet } from '../sketch/MeasureSheet';
+import { RoomSizeSheet } from '../sketch/RoomSizeSheet';
 import { formatFeetInches } from '../../lib/feetInches';
 import { viewTransform, screenToScene, panDelta, normRot, type View as VView } from '../sketch/viewTransform';
 import {
@@ -160,6 +161,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const [wetSheet, setWetSheet] = useState<{ roomId: string; material: string; disposition: 'dry' | 'remove' } | null>(null);
   const [openSheet, setOpenSheet] = useState<OpeningDraft | null>(null);
   const [selOpening, setSelOpening] = useState<OpeningSelState | null>(null);
+  const [sizeSheet, setSizeSheet] = useState(false);
   const [structCeiling, setStructCeiling] = useState<number | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -447,6 +449,19 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       setTool('select');
       setDraft(null);
     } finally { setSaving(false); }
+  }
+
+  // Type the two measurements and the space draws itself, same as the room editor. The
+  // rectangle lands centred on what the tech is looking at, with its ORIGIN snapped rather
+  // than its size, so the width and length stay exactly what was typed. It then goes
+  // through the normal naming flow, because an unnamed space on a floor plan is useless.
+  function createRectExact(widthFt: number, lengthFt: number) {
+    const w = widthFt * UNITS_PER_FT, h = lengthFt * UNITS_PER_FT;
+    const c = size.w ? pxToScene([size.w / 2, size.h / 2]) : ([0, 0] as Pt);
+    const x = snap(c[0] - w / 2), y = snap(c[1] - h / 2);
+    setSizeSheet(false);
+    setDraft(null);
+    setNameSheet({ points: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], name: '' });
   }
 
   function addPolyCorner() {
@@ -877,6 +892,14 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
           <button onClick={() => zoomBy(0.8)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Minus size={18} /></button>
         </div>
 
+        {tool === 'space' && spaceMode === 'rect' && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
+            <button onClick={() => setSizeSheet(true)}
+              className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-6 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2">
+              <Ruler size={16} /> Type exact size
+            </button>
+          </div>
+        )}
         {isPoly && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
             {polyDraft && polyDraft.pts.length > 0 && (
@@ -967,7 +990,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
         {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Drag a room near another and it snaps flush · Rotate in 90 degree steps' : 'Snapping is off · Drag to position') : 'Tap a room to select it, or an OPENING to re-measure it. Two fingers to pan and zoom.')}
-        {tool === 'space' && (spaceMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Draw an L-shaped hall if that is the shape.' : 'Drag a box from the anchor corner. Snaps to the 1 ft grid.')}
+        {tool === 'space' && (spaceMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Draw an L-shaped hall if that is the shape.' : 'Tap TYPE EXACT SIZE and the space draws itself. Or drag a box from the anchor corner.')}
         {isOpening && `Drag the ${OPENING_LABEL[doorKind].toLowerCase()} onto a wall, then measure it. It mirrors onto a shared wall.`}
         {isPlace && 'Drag onto the map. The preview shows exactly where it lands, release to drop.'}
         {tool === 'wet' && 'Tap a room to mark its whole floor wet. Use the room sketch for partial areas.'}
@@ -1027,6 +1050,15 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
           />
         );
       })()}
+
+      {sizeSheet && (
+        <RoomSizeSheet
+          title="Space size"
+          subtitle="Type the two measurements and the space draws itself. You name it next."
+          onCancel={() => setSizeSheet(false)}
+          onCreate={createRectExact}
+        />
+      )}
 
       {nameSheet && (
         <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>

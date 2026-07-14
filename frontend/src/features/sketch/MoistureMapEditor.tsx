@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import { RoomDimensions } from './RoomDimensions';
 import { MeasureSheet } from './MeasureSheet';
+import { RoomSizeSheet } from './RoomSizeSheet';
 import { formatFeetInches } from '../../lib/feetInches';
 import { viewTransform, screenToScene, panDelta, normRot, type View as VView } from './viewTransform';
 import {
@@ -129,6 +130,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [selEdge, setSelEdge] = useState<{ wallId: string; edge: number } | null>(null);
   const [edgeSheet, setEdgeSheet] = useState<{ wallId: string; edge: number; currentFt: number } | null>(null);
   const [ceilSheet, setCeilSheet] = useState(false);
+  const [sizeSheet, setSizeSheet] = useState(false);
   const [openingSheet, setOpeningSheet] = useState<OpeningDraft | null>(null);
   const [showDims, setShowDims] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
@@ -521,6 +523,28 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   }
   function undoPolyPoint() {
     setDraft(d => (d?.kind === 'poly' ? (d.pts.length <= 1 ? null : { kind: 'poly', pts: d.pts.slice(0, -1) }) : d));
+  }
+
+  // TYPE THE ROOM, DO NOT DRAW IT.
+  //
+  // A tech with a laser measure has two numbers. Dragging a box with a fingertip and then
+  // correcting each wall afterwards is the long way round to the same rectangle, and it is
+  // how a room ends up 11 ft 11 in because nobody went back to fix it. Xactimate calls this
+  // "add a room using exact dimensions"; so do we.
+  //
+  // The rectangle lands centred on what the tech is looking at, with its ORIGIN snapped to
+  // the inch rather than its size, so the width and length stay exactly what was typed.
+  // Then we drop into Move, where every wall shows its length and can be retyped.
+  function createRectExact(widthFt: number, lengthFt: number) {
+    const w = widthFt * UNITS_PER_FT, h = lengthFt * UNITS_PER_FT;
+    const c = size.w ? pxToScene([size.w / 2, size.h / 2]) : ([SCENE_SIZE / 2, SCENE_SIZE / 2] as Pt);
+    const x = snapGrid(c[0] - w / 2, INCH), y = snapGrid(c[1] - h / 2, INCH);
+    const pts: Pt[] = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    snapshot();
+    setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
+    setSizeSheet(false);
+    setDraft(null);
+    selectTool('move');
   }
 
   // Placing an opening OPENS THE MEASUREMENT SHEET. It does not write anything yet.
@@ -1036,6 +1060,14 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             <button onClick={finishWet} className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-7 py-3 text-sm font-extrabold shadow-lg active:scale-95">Done</button>
           </div>
         )}
+        {tool === 'room' && roomMode === 'rect' && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
+            <button onClick={() => setSizeSheet(true)}
+              className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-6 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2">
+              <Ruler size={16} /> Type exact size
+            </button>
+          </div>
+        )}
         {isCustom && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
             {polyDraft && polyDraft.pts.length > 0 && (
@@ -1114,7 +1146,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
         {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it.' : 'Tap a WALL to set its exact length, or an OPENING to re-measure it. Drag a corner to reshape.')}
-        {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Set exact lengths after, in Move.' : 'Drag a rough box, then switch to Move and type each wall\u2019s exact length.')}
+        {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Set exact lengths after, in Move.' : 'Tap TYPE EXACT SIZE and the room draws itself. Or drag a rough box and correct each wall in Move.')}
         {tool === 'wet' && (activeWetId ? 'Keep painting the wet spot, then tap Done. Two fingers to pan.' : 'Paint over the wet spots. Lift and paint more; tap Done to finish.')}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
@@ -1162,6 +1194,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           quick={[{ label: "8'", ft: 8 }, { label: "8' 6\"", ft: 8.5 }, { label: "9'", ft: 9 }, { label: "10'", ft: 10 }]}
           onCancel={() => setCeilSheet(false)}
           onSave={applyCeiling}
+        />
+      )}
+      {sizeSheet && (
+        <RoomSizeSheet
+          onCancel={() => setSizeSheet(false)}
+          onCreate={createRectExact}
         />
       )}
       {openingSheet && (() => {

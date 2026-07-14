@@ -1,14 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { ChevronLeft, Info } from 'lucide-react';
-import { parseFeetInches, formatFeetInches } from '../../lib/feetInches';
+import { formatFeetInches } from '../../lib/feetInches';
+import { FeetInchesInput } from '../../components/FeetInchesInput';
 
 // Type an exact measurement.
 //
 // THIS IS THE THING THAT WAS MISSING. Every dimension in the app could only be set by
 // dragging, and you cannot drag 12 ft 7 in with a fingertip. Draw for shape, TYPE for
-// truth. Accepts what a tech actually types: 12' 7", 12'7, 12-7, 12 7, 12ft 7in, 151",
-// 12' 7 1/2", or a bare 12.583. Rejects garbage rather than silently reading it as zero,
-// because a zero dimension is a zero-dollar line item.
+// truth.
+//
+// FEET AND INCHES ARE TWO NUMBER FIELDS. The first version of this took a text string
+// and asked a tech to type 12' 7". Those characters live behind the symbol key on an
+// iOS keyboard, and a person in a wet house wearing gloves is not going to hunt for
+// them: they will type 12.58, or give up and drag the wall. Two number boxes and a
+// numeric keypad. The app does the arithmetic.
+//
+// A value out of range is REJECTED rather than silently read as zero, because a zero
+// dimension is a zero-dollar line item.
 export function MeasureSheet({ title, subtitle, note, initialFt, min, max, onCancel, onSave, onBack, quick, step }: {
   title: string;
   subtitle?: string;
@@ -22,23 +30,20 @@ export function MeasureSheet({ title, subtitle, note, initialFt, min, max, onCan
   onSave: (ft: number) => void;
   onBack?: () => void;                    // a multi-step flow must be reversible
 }) {
-  const [text, setText] = useState(initialFt != null && initialFt > 0 ? formatFeetInches(initialFt) : '');
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { const t = setTimeout(() => inputRef.current?.focus(), 60); return () => clearTimeout(t); }, []);
+  const [ft, setFt] = useState<number | null>(initialFt != null && initialFt > 0 ? initialFt : null);
+  // Remounts the inputs when a quick chip is tapped, so the boxes show the chosen value.
+  const [seed, setSeed] = useState(0);
 
-  const parsed = parseFeetInches(text);
-  const tooSmall = parsed != null && min != null && parsed < min;
-  const tooBig = parsed != null && max != null && parsed > max;
-  const invalid = text.trim() !== '' && parsed == null;
-  const ok = parsed != null && parsed > 0 && !tooSmall && !tooBig;
+  const tooSmall = ft != null && min != null && ft < min;
+  const tooBig = ft != null && max != null && ft > max;
+  const ok = ft != null && ft > 0 && !tooSmall && !tooBig;
 
-  const err = invalid
-    ? 'That is not a measurement. Try 12\u2032 7\u2033, 12-7, or 12.58.'
-    : tooSmall ? `Too small. Minimum ${formatFeetInches(min!)}.`
+  const err = tooSmall ? `Too small. Minimum ${formatFeetInches(min!)}.`
     : tooBig ? `Too large. Maximum ${formatFeetInches(max!)}.`
     : null;
 
-  const submit = () => { if (ok) onSave(parsed!); };
+  const submit = () => { if (ok) onSave(ft!); };
+  const takeQuick = (v: number) => { setFt(v); setSeed(s => s + 1); };
 
   return (
     <div className="fixed inset-0 z-[70] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6vh)' }}>
@@ -66,33 +71,26 @@ export function MeasureSheet({ title, subtitle, note, initialFt, min, max, onCan
           </div>
         )}
 
-        <input
-          ref={inputRef}
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') submit(); }}
-          placeholder={"12' 7\""}
-          inputMode="text"
-          autoCapitalize="off" autoCorrect="off" spellCheck={false}
-          className={`w-full border rounded-xl px-3.5 py-3.5 mt-3 text-[22px] font-bold tabular-nums text-center focus:outline-none ${
-            err ? 'border-red-300 focus:border-red-400 text-red-600' : ok ? 'border-sky focus:border-sky text-navy' : 'border-gray-200 focus:border-sky'
-          }`}
-        />
+        <div className="mt-3">
+          <FeetInchesInput key={seed} initialFt={ft} onChange={setFt} autoFocus invalid={!!err} />
+        </div>
 
         {/* live read-back: the tech sees exactly what the app understood */}
-        <div className="h-5 mt-1.5 text-center">
+        <div className="h-5 mt-2 text-center">
           {err
             ? <span className="text-[12px] font-semibold text-red-600">{err}</span>
             : ok
-              ? <span className="text-[12px] text-gray-400">= <span className="font-bold text-navy">{formatFeetInches(parsed!)}</span> ({parsed!.toFixed(3)} ft)</span>
-              : <span className="text-[12px] text-gray-400">Feet and inches, or a decimal.</span>}
+              ? <span className="text-[12px] text-gray-400">= <span className="font-bold text-navy">{formatFeetInches(ft!)}</span> ({ft!.toFixed(3)} ft)</span>
+              : <span className="text-[12px] text-gray-400">Feet in the left box, inches in the right.</span>}
         </div>
 
         {quick && quick.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2 justify-center">
             {quick.map(q => (
-              <button key={q.label} onClick={() => setText(formatFeetInches(q.ft))}
-                className="px-3 py-1.5 rounded-full text-[13px] font-semibold bg-sky-soft text-sky-deep active:scale-95">
+              <button key={q.label} onClick={() => takeQuick(q.ft)}
+                className={`px-3 py-1.5 rounded-full text-[13px] font-semibold active:scale-95 ${
+                  ft != null && Math.abs(ft - q.ft) < 1e-6 ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'
+                }`}>
                 {q.label}
               </button>
             ))}
