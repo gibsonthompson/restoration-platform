@@ -137,6 +137,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // reads each wall without switching modes. The ruler button toggles them off when the
   // canvas is busy. On by default, because the numbers are the point of the sketch.
   const [showWalls, setShowWalls] = useState(true);
+  // A moisture map is ONE room. Drawing a second room inside an existing one is always a
+  // mistake, so it is blocked with a brief note rather than silently allowed.
+  const [roomWarn, setRoomWarn] = useState<string | null>(null);
   const [confirmExit, setConfirmExit] = useState(false);
   // Any edit at all marks the sketch dirty. Closing without saving is how a tech loses
   // an hour of work in a wet house, so we ask rather than silently discard.
@@ -144,6 +147,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const roomWarnTimer = useRef<number | null>(null);
   const viewRef = useRef(view); viewRef.current = view;
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -182,6 +186,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     setView({ k, rot: 0, tx: (size.w - SCENE_SIZE * k) / 2, ty: (size.h - SCENE_SIZE * k) / 2 });
     inited.current = true;
   }, [size]);
+  useEffect(() => () => { if (roomWarnTimer.current) window.clearTimeout(roomWarnTimer.current); }, []);
 
   function toPixel(cx: number, cy: number): Pt {
     const svg = svgRef.current; const ctm = svg?.getScreenCTM();
@@ -237,6 +242,15 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   function snapshot() { setHistory(h => [...h.slice(-29), scene]); setDirty(true); }
   function undo() { setHistory(h => { if (!h.length) return h; setScene(h[h.length - 1]); setSelectedId(null); setSelEdge(null); return h.slice(0, -1); }); }
 
+  // Is this point inside a room already on the map? This is what stops a room being drawn
+  // inside another room: hitWall is a point-in-polygon test against every wall outline.
+  const pointInAnyRoom = (p: Pt) => !!hitWall(scene, p[0], p[1]);
+  function warnRoomInside() {
+    setRoomWarn('This map already has a room here. Draw outside it, or use Move to reshape.');
+    if (roomWarnTimer.current) window.clearTimeout(roomWarnTimer.current);
+    roomWarnTimer.current = window.setTimeout(() => setRoomWarn(null), 2600);
+  }
+
   // ---- TYPE AN EXACT WALL LENGTH -------------------------------------------
   function applyEdgeLength(ft: number) {
     if (!edgeSheet) return;
@@ -291,7 +305,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         }
       }
     } else if (tool === 'room') {
+      // Poly pans on down (a corner is added on tap), so it is guarded at the tap instead.
+      // Rectangle starts its draft here, so block it the moment it would begin inside a room.
       if (roomMode === 'poly') { g.current.kind = 'pan'; }
+      else if (pointInAnyRoom(s)) { warnRoomInside(); g.current.kind = 'pan'; }
       else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
     } else if (tool === 'wet') {
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] }); setActive({ scene: s, px }); setGuide(null);
@@ -441,7 +458,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     } else if (g.current.kind === 'polyTap' && !g.current.moved) {
       const { p } = snapPoint(g.current.downScene!);
       const d = draft;
-      if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 30) {
+      const firstCorner = !(d?.kind === 'poly' && d.pts.length > 0);
+      if (firstCorner && pointInAnyRoom(p)) {
+        warnRoomInside();   // do not start a custom room inside an existing one
+      } else if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 30) {
         snapshot(); const pts = d.pts; setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] })); setDraft(null);
       } else {
         setDraft(d?.kind === 'poly' ? { kind: 'poly', pts: [...d.pts, p] } : { kind: 'poly', pts: [p] });
@@ -517,6 +537,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     if (!size.w) return;
     const p = snapPoint(pxToScene([size.w / 2, size.h / 2])).p;
     const d = draft;
+    const firstCorner = !(d?.kind === 'poly' && d.pts.length > 0);
+    if (firstCorner && pointInAnyRoom(p)) { warnRoomInside(); return; }
     if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 40) {
       snapshot(); const pts = d.pts;
       setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
@@ -542,6 +564,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   function createRectExact(widthFt: number, lengthFt: number) {
     const w = widthFt * UNITS_PER_FT, h = lengthFt * UNITS_PER_FT;
     const c = size.w ? pxToScene([size.w / 2, size.h / 2]) : ([SCENE_SIZE / 2, SCENE_SIZE / 2] as Pt);
+    if (pointInAnyRoom(c)) { setSizeSheet(false); warnRoomInside(); return; }
     const x = snapGrid(c[0] - w / 2, INCH), y = snapGrid(c[1] - h / 2, INCH);
     const pts: Pt[] = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
     snapshot();
@@ -836,6 +859,39 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         );
       }))}
 
+      {/* OPENINGS SHOW THEIR SIZE, off the wall line so they do not collide with the wall
+          length. This is the door / window / opening measurement, right on the map. An
+          opening still missing a height reads amber with "h?" so it gets measured. */}
+      {showWalls && (scene.openings ?? []).map(o => {
+        const w = scene.walls.find(x => x.id === o.wallId);
+        if (!w) return null;
+        const n = w.points.length;
+        const a = w.points[o.edge], b = w.points[(o.edge + 1) % n];
+        const ex = b[0] - a[0], ey = b[1] - a[1]; const len = Math.hypot(ex, ey) || 1;
+        const t = o.t ?? 0.5;
+        const cx = a[0] + ex * t, cy = a[1] + ey * t;
+        const nx = -ey / len, ny = ex / len;   // perpendicular, to push the label off the wall
+        const off = 15 / k;
+        const lx = cx + nx * off, ly = cy + ny * off;
+        const measured = o.kind === 'missing_wall' || o.heightFt != null;
+        const label = o.kind === 'missing_wall'
+          ? formatFeetInches(o.widthFt)
+          : o.heightFt != null
+            ? `${formatFeetInches(o.widthFt)} \u00d7 ${formatFeetInches(o.heightFt)}`
+            : `${formatFeetInches(o.widthFt)}, h?`;
+        const on = selectedId === o.id;
+        return (
+          <text key={o.id + '-size'} x={lx} y={ly}
+                transform={view.rot ? `rotate(${-view.rot} ${lx} ${ly})` : undefined}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={(on ? 13 : 11) / k} fontWeight={on ? 900 : 700}
+                fill={on ? '#1483C2' : measured ? '#0369a1' : '#b45309'}
+                stroke="#fff" strokeWidth={4 / k} paintOrder="stroke" style={{ pointerEvents: 'none' }}>
+            {label}
+          </text>
+        );
+      })}
+
       {draft?.kind === 'wet' && draft.pts.length > 0 && (
         draft.pts.length === 1
           ? <circle cx={draft.pts[0][0]} cy={draft.pts[0][1]} r={WET_BRUSH / 2} fill="#7DD3FC" fillOpacity={0.55} />
@@ -1019,11 +1075,16 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             {drawReadout}
           </div>
         )}
+        {roomWarn && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-500 text-white text-[12px] font-bold px-3.5 py-1.5 rounded-full pointer-events-none z-20 max-w-[92%] text-center shadow-lg">
+            {roomWarn}
+          </div>
+        )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
-          {/* Show or hide every wall's length on the sketch. On by default; turn it off when
-              the canvas is busy and you want the drawing clean. */}
-          <button onClick={() => setShowWalls(v => !v)} aria-label="Show wall lengths"
+          {/* Show or hide measurements on the sketch: every wall length AND every opening
+              size. On by default; turn it off when the canvas is busy. */}
+          <button onClick={() => setShowWalls(v => !v)} aria-label="Show measurements"
             className={`rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 ${showWalls ? 'bg-navy text-white' : 'bg-white text-navy'}`}><Ruler size={18} /></button>
           {/* Turn the plan to face the way you are standing. Tap to rotate, hold-free
               double tap on the compass to snap back to north. */}
