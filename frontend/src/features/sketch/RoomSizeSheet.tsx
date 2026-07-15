@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Info, X } from 'lucide-react';
 import { formatFeetInches } from '../../lib/feetInches';
 import { FeetInchesInput } from '../../components/FeetInchesInput';
@@ -17,6 +17,14 @@ import { FeetInchesInput } from '../../components/FeetInchesInput';
 // keyboard in a wet house. Four number boxes, a numeric keypad, and the area updates as
 // they type, so a fat-fingered 120 ft wall announces itself as 1,200 sq ft before they
 // ever tap Draw it.
+//
+// PREFILL WITH THE CURRENT SIZE. When this opens on a room that already has a size (the
+// "Set size" button on the floor plan hands in its current width and length), the boxes
+// must OPEN showing those numbers, not blank. FeetInchesInput only reads its initialFt at
+// mount, so a value handed in after the first render, or a second open for a different
+// room on a reused sheet, would not appear. The effect below reseeds width and length and
+// remounts the inputs (via the bumped key) whenever the caller passes new dimensions. The
+// reseed is skipped on the first render so a size the tech is typing is never wiped out.
 // ============================================================================
 export function RoomSizeSheet({ title = 'Room size', subtitle, initialWidthFt, initialLengthFt, onCancel, onCreate }: {
   title?: string;
@@ -28,6 +36,17 @@ export function RoomSizeSheet({ title = 'Room size', subtitle, initialWidthFt, i
 }) {
   const [w, setW] = useState<number | null>(initialWidthFt ?? null);
   const [l, setL] = useState<number | null>(initialLengthFt ?? null);
+  // Bumped to remount the inputs when the caller hands in a new size, so the boxes show
+  // the prefilled value (FeetInchesInput only reads initialFt at mount).
+  const [seed, setSeed] = useState(0);
+
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    setW(initialWidthFt ?? null);
+    setL(initialLengthFt ?? null);
+    setSeed(s => s + 1);
+  }, [initialWidthFt, initialLengthFt]);
 
   const tooBig = (v: number | null) => v != null && v > 200;
   const wBad = tooBig(w);
@@ -55,12 +74,12 @@ export function RoomSizeSheet({ title = 'Room size', subtitle, initialWidthFt, i
 
         <div className="mt-3">
           <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Width, left to right</div>
-          <FeetInchesInput initialFt={w} onChange={setW} autoFocus invalid={wBad} compact />
+          <FeetInchesInput key={`w${seed}`} initialFt={w} onChange={setW} autoFocus invalid={wBad} compact />
         </div>
 
         <div className="mt-3">
           <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Length, front to back</div>
-          <FeetInchesInput initialFt={l} onChange={setL} invalid={lBad} compact />
+          <FeetInchesInput key={`l${seed}`} initialFt={l} onChange={setL} invalid={lBad} compact />
         </div>
 
         {/* Live read-back. A fat-fingered 120 ft wall announces itself as 1,200 sq ft

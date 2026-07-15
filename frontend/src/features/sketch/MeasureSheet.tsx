@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, Info } from 'lucide-react';
 import { formatFeetInches } from '../../lib/feetInches';
 import { FeetInchesInput } from '../../components/FeetInchesInput';
@@ -17,6 +17,17 @@ import { FeetInchesInput } from '../../components/FeetInchesInput';
 //
 // A value out of range is REJECTED rather than silently read as zero, because a zero
 // dimension is a zero-dollar line item.
+//
+// STEP TO STEP RESET. FeetInchesInput only reads initialFt when it mounts (that is why a
+// quick chip bumps `seed` to remount it). A multi-step flow reuses this ONE sheet: the
+// door width step and the door height step are the same MeasureSheet with a new initialFt.
+// Without the effect below, the height step opened showing the width just typed (enter a
+// 2 ft width and the height box started at 2 ft), because neither `ft` nor the input was
+// reset. Now, whenever the caller hands down a new initialFt (the next step, or a new
+// opening being measured), the value resets to it and the input remounts to show it. The
+// height default is whatever the caller passes (6 ft 8 in for a door, 4 ft for a window,
+// full ceiling for a missing wall), so this stays per-kind and never a flat guess. The
+// reset is skipped on the first render so typing is never clobbered mid-entry.
 export function MeasureSheet({ title, subtitle, note, initialFt, min, max, onCancel, onSave, onBack, quick, step }: {
   title: string;
   subtitle?: string;
@@ -33,6 +44,17 @@ export function MeasureSheet({ title, subtitle, note, initialFt, min, max, onCan
   const [ft, setFt] = useState<number | null>(initialFt != null && initialFt > 0 ? initialFt : null);
   // Remounts the inputs when a quick chip is tapped, so the boxes show the chosen value.
   const [seed, setSeed] = useState(0);
+
+  // Follow the caller's initialFt when it changes (next step, or a different opening).
+  // FeetInchesInput only reads initialFt at mount, so we reset the value AND bump seed to
+  // remount it. Skipped on the first render (mount already seeded correctly), so a value
+  // the tech is typing is never wiped out from under them.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    setFt(initialFt != null && initialFt > 0 ? initialFt : null);
+    setSeed(s => s + 1);
+  }, [initialFt]);
 
   const tooSmall = ft != null && min != null && ft < min;
   const tooBig = ft != null && max != null && ft > max;
