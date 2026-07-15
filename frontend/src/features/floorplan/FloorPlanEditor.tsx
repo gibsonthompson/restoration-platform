@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   X, Save, RotateCw, Plus, Minus, Grid3x3, DoorOpen, MousePointer2,
-  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler, Info, Navigation
+  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler, Info, Navigation,
+  Maximize2, LayoutGrid, Archive
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from '../sketch/SceneLayers';
@@ -186,6 +187,28 @@ function PlanGlyph({ kind, size = 26 }: { kind: string; size?: number }) {
   return shell(<circle r={5} fill="#fff" />);
 }
 
+// A room reduced to a small badge of its true outline, for the tray. It normalises the
+// room's own walls into a fixed box, so a tech recognises the L-shaped hall from its shape
+// rather than reading a name off a generic square.
+function RoomThumb({ walls }: { walls: { points: Pt[] }[] }) {
+  const W = 48, H = 34, pad = 4;
+  const pts = walls.flatMap(w => w.points);
+  if (pts.length < 2) return <div style={{ width: W, height: H }} className="rounded-md bg-white border border-gray-200" />;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = (maxX - minX) || 1, h = (maxY - minY) || 1;
+  const s = Math.min((W - pad * 2) / w, (H - pad * 2) / h);
+  const ox = (W - w * s) / 2 - minX * s, oy = (H - h * s) / 2 - minY * s;
+  const map = (p: Pt) => `${(p[0] * s + ox).toFixed(1)},${(p[1] * s + oy).toFixed(1)}`;
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+      {walls.map((wall, i) => (
+        <polygon key={i} points={wall.points.map(map).join(' ')} fill="#E6F0FA" stroke="#1483C2" strokeWidth={1.3} strokeLinejoin="round" />
+      ))}
+    </svg>
+  );
+}
+
 // Structure floor-plan canvas. TWO things at once, and that is the design:
 //   1. A LAYOUT of rooms (drag, rotate, snap flush). Saved to resto_structure_floorplans.
 //   2. An EDITOR onto each room's own sketch. A door, air mover, or wet floor placed
@@ -198,6 +221,12 @@ function PlanGlyph({ kind, size = 26 }: { kind: string; size?: number }) {
 // equipment are DRAGGED out of the palette with a live ghost showing exactly where they
 // will land, and an opening is MEASURED on drop instead of assumed. Anything less is a
 // worse tool for the same job.
+//
+// ASSEMBLY. Rooms are not auto-scattered across the canvas on open any more. Unplaced
+// rooms wait in a tray and get dropped in (tap to drop in the middle, or drag to a spot),
+// mating flush to the nearest wall on drop, with the view keeping itself framed. Hunting
+// for a scattered room and dragging it precisely while fighting zoom was the tedious part,
+// and this removes it.
 export function FloorPlanEditor({ structureId, structureName, claimId, orgId, onClose }: {
   structureId: string; structureName: string; claimId: string; orgId: string; onClose: (saved: boolean) => void;
 }) {
@@ -224,6 +253,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const [active, setActive] = useState<{ scene: Pt; px: Pt } | null>(null);
   const [draft, setDraft] = useState<{ kind: 'rect'; a: Pt; b: Pt } | { kind: 'poly'; pts: Pt[] } | null>(null);
   const [paletteGhost, setPaletteGhost] = useState<{ kind: string; x: number; y: number; over: boolean } | null>(null);
+  const [roomGhost, setRoomGhost] = useState<{ roomId: string; x: number; y: number; over: boolean } | null>(null);
   const [nameSheet, setNameSheet] = useState<{ points: Pt[]; name: string } | null>(null);
   const [wetSheet, setWetSheet] = useState<{ roomId: string; material: string; disposition: 'dry' | 'remove' } | null>(null);
   const [openSheet, setOpenSheet] = useState<OpeningDraft | null>(null);
@@ -243,6 +273,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; roomId?: string; grab?: Pt; openHit?: OpeningRef[] }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
+  const roomDrag = useRef<{ id: number; roomId: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
   const markDirty = (roomId: string) => setDirty(d => new Set(d).add(roomId));
 
@@ -277,7 +308,9 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         .select('layout_json').eq('structure_id', structureId).limit(1);
       const saved: Block[] = (fp && (fp[0] as any)?.layout_json?.blocks) ?? [];
       setRooms(rs); setFootprints(fps); setScenes(scs); setSketchIds(sids);
-      setBlocks(autoArrange(rs.map(r => fps[r.id]), saved));
+      // Only rooms that already have a saved position go on the canvas. Everything else
+      // waits in the tray to be dropped in, instead of being auto-scattered across the plan.
+      setBlocks(saved.filter(b => fps[b.roomId]));
       setLoading(false);
     })();
   }, [structureId]);
@@ -289,14 +322,28 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (inited.current || !size.w || !size.h || loading) return;
+  // Frame the whole plan in view. Pulled out so the tech never has to hunt for a room with
+  // pinch and pan: it runs on first open, after a room is dropped in from the tray, and on
+  // the Fit button and Auto-arrange. Rotation is preserved so fitting does not also spin
+  // the plan.
+  function fitView(bs: Block[]) {
+    if (!size.w || !size.h) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const b of blocks) { const fp = footprints[b.roomId]; if (!fp) continue; const bb = placedBBox(fp, b); minX = Math.min(minX, bb.minX); minY = Math.min(minY, bb.minY); maxX = Math.max(maxX, bb.maxX); maxY = Math.max(maxY, bb.maxY); }
-    if (!isFinite(minX)) { setView({ k: 0.6, rot: 0, tx: size.w / 2, ty: size.h / 2 }); inited.current = true; return; }
+    for (const b of bs) {
+      const fp = footprints[b.roomId]; if (!fp) continue;
+      const bb = placedBBox(fp, b);
+      minX = Math.min(minX, bb.minX); minY = Math.min(minY, bb.minY);
+      maxX = Math.max(maxX, bb.maxX); maxY = Math.max(maxY, bb.maxY);
+    }
+    if (!isFinite(minX)) { setView(v => ({ ...v, k: 0.6, tx: size.w / 2, ty: size.h / 2 })); return; }
     const cw = (maxX - minX) || 1, ch = (maxY - minY) || 1, pad = 70;
     const k = Math.min((size.w - pad) / cw, (size.h - pad) / ch, 3);
-    setView({ k, rot: 0, tx: (size.w - cw * k) / 2 - minX * k, ty: (size.h - ch * k) / 2 - minY * k });
+    setView(v => ({ ...v, k, tx: (size.w - cw * k) / 2 - minX * k, ty: (size.h - ch * k) / 2 - minY * k }));
+  }
+
+  useEffect(() => {
+    if (inited.current || !size.w || !size.h || loading) return;
+    fitView(blocks);
     inited.current = true;
   }, [size, loading, blocks, footprints]);
 
@@ -740,6 +787,82 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   }
   function onPaletteCancel() { pdrag.current = null; setPaletteGhost(null); setActive(null); }
 
+  // ---- ROOM TRAY: drag a whole room in from the dock -----------------------
+  // Assembling a plan used to mean every room was auto-scattered on the canvas and you
+  // dragged each one into place while fighting zoom. Now unplaced rooms sit in a tray and
+  // you drop them in: on drop the room mates flush to the nearest wall, and the view keeps
+  // itself framed, so precise dragging and constant zooming are no longer the job.
+  function roomSeed(roomId: string, scene: Pt): Block | null {
+    const fp = footprints[roomId]; if (!fp) return null;
+    // Build the block via the model's own factory so every field the renderer and the
+    // saver expect is present, then drop it at the chosen point.
+    const seed = autoArrange([fp], [])[0];
+    if (!seed) return null;
+    return { ...seed, roomId, x: snap(scene[0]), y: snap(scene[1]) };
+  }
+
+  function previewPlacement(roomId: string, scene: Pt): Block | null {
+    let nb = roomSeed(roomId, scene);
+    if (!nb) return null;
+    if (magnet && blocks.length) {
+      const cand = [...blocks, nb];
+      const res = computeWallSnap(footprints, cand, nb, (SNAP_PX * 2) / viewRef.current.k, MIN_OVERLAP);
+      if (res) nb = { ...nb, x: nb.x + res.dx, y: nb.y + res.dy };
+    }
+    return nb;
+  }
+
+  function placeRoomFromDock(roomId: string, scene: Pt) {
+    const nb = previewPlacement(roomId, scene);
+    if (!nb) return;
+    const next = [...blocks, nb];
+    setBlocks(next);
+    setSelected(roomId);
+    setTool('select');
+    // Keep it on screen: refit only if the new room lands outside the current view, or if
+    // it is the first room down, so the view does not yank around on every single drop.
+    const v = viewRef.current;
+    const vMinX = -v.tx / v.k, vMinY = -v.ty / v.k, vMaxX = (size.w - v.tx) / v.k, vMaxY = (size.h - v.ty) / v.k;
+    const fp = footprints[roomId];
+    const bb = fp ? placedBBox(fp, nb) : null;
+    const outside = bb ? (bb.minX < vMinX || bb.maxX > vMaxX || bb.minY < vMinY || bb.maxY > vMaxY) : false;
+    if (blocks.length === 0 || outside) fitView(next);
+  }
+
+  function autoArrangeAll() {
+    const fps = rooms.map(r => footprints[r.id]).filter(Boolean) as Footprint[];
+    const arr = autoArrange(fps, blocks);
+    setBlocks(arr);
+    fitView(arr);
+  }
+
+  function onRoomDockDown(e: React.PointerEvent, roomId: string) {
+    roomDrag.current = { id: e.pointerId, roomId, startX: e.clientX, startY: e.clientY, dragging: false };
+  }
+  function onRoomDockMove(e: React.PointerEvent) {
+    const d = roomDrag.current; if (!d || e.pointerId !== d.id) return;
+    if (!d.dragging) {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 8) return;
+      d.dragging = true;
+      try { (e.currentTarget as HTMLElement).setPointerCapture(d.id); } catch (_e) {}
+    }
+    const over = pointInWrap(e.clientX, e.clientY);
+    if (over) { const p = toPixel(e.clientX, e.clientY); setActive({ scene: pxToScene(p), px: p }); }
+    else setActive(null);
+    setRoomGhost({ roomId: d.roomId, x: e.clientX, y: e.clientY, over });
+  }
+  function onRoomDockUp(e: React.PointerEvent) {
+    const d = roomDrag.current; if (!d || e.pointerId !== d.id) return;
+    if (d.dragging) {
+      if (pointInWrap(e.clientX, e.clientY)) placeRoomFromDock(d.roomId, pxToScene(toPixel(e.clientX, e.clientY)));
+    } else {
+      // a plain tap drops the room into the middle of what you are looking at
+      placeRoomFromDock(d.roomId, pxToScene([size.w / 2, size.h / 2]));
+    }
+    roomDrag.current = null; setRoomGhost(null); setActive(null);
+  }
+  function onRoomDockCancel() { roomDrag.current = null; setRoomGhost(null); setActive(null); }
+
   function zoomBy(f: number) { const v = viewRef.current, cx = size.w / 2, cy = size.h / 2; const k = clampK(v.k * f); const ff = k / v.k; setView({ ...v, k, tx: cx - (cx - v.tx) * ff, ty: cy - (cy - v.ty) * ff }); }
   function rotateSel() { if (!selected) return; setBlocks(bs => bs.map(b => b.roomId === selected ? { ...b, rotation: (b.rotation + 90) % 360 } : b)); }
 
@@ -869,6 +992,11 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const rx = rectDraft ? Math.min(rectDraft.a[0], rectDraft.b[0]) : 0, ry = rectDraft ? Math.min(rectDraft.a[1], rectDraft.b[1]) : 0;
   const rw = rectDraft ? Math.abs(rectDraft.b[0] - rectDraft.a[0]) : 0, rh = rectDraft ? Math.abs(rectDraft.b[1] - rectDraft.a[1]) : 0;
   const activeKey = tool === 'equip' ? equipType : isOpening ? doorKind : tool;
+
+  // Rooms that are not on the canvas yet wait in the tray. The preview is the room outline
+  // shown where it will land while a tray chip is being dragged over the canvas.
+  const dockedRooms = rooms.filter(r => !blocks.some(b => b.roomId === r.id));
+  const roomPreview = roomGhost?.over && active ? previewPlacement(roomGhost.roomId, active.scene) : null;
 
   const OPENING_ITEMS = [
     { key: 'door', label: 'Door', onSelect: () => { setDoorKind('door'); setTool('door'); } },
@@ -1052,6 +1180,21 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                   </g>
                 );
               })()}
+
+              {/* dragging a room in from the tray: show its real outline where it will land,
+                  already mated to the nearest wall */}
+              {roomPreview && (() => {
+                const fp = footprints[roomPreview.roomId]; if (!fp) return null;
+                const walls = placedWalls(fp, roomPreview);
+                return (
+                  <g style={{ pointerEvents: 'none' }} opacity={0.9}>
+                    {walls.map((w, i) => (
+                      <polygon key={i} points={ptsStr(w.points)} fill="#1483C2" fillOpacity={0.12}
+                               stroke="#1483C2" strokeWidth={2.5 / k} strokeDasharray={`${6 / k} ${4 / k}`} strokeLinejoin="round" />
+                    ))}
+                  </g>
+                );
+              })()}
             </g>
 
             {isPoly && (
@@ -1101,6 +1244,10 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
               <Navigation size={16} style={{ transform: `rotate(${-view.rot}deg)` }} />
             </button>
           )}
+          {/* Fit the whole plan back into view. Assembly relies on this: drop rooms in, and
+              tap Fit to see everything without pinching. */}
+          <button onClick={() => fitView(blocks)} aria-label="Fit the whole plan"
+            className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 text-navy"><Maximize2 size={17} /></button>
           <button onClick={() => zoomBy(1.25)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Plus size={18} /></button>
           <button onClick={() => zoomBy(0.8)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Minus size={18} /></button>
         </div>
@@ -1140,7 +1287,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         )}
 
         {tool === 'select' && selFp && !selOpen && (
-          <div className="absolute left-3 bottom-3 flex gap-2 flex-wrap max-w-[78%]">
+          <div className="absolute left-3 bottom-3 flex gap-2 flex-wrap max-w-[80%]">
             {/* Tap the size to change it. It rewrites the room's OWN sketch, so the plan and
                 the room editor can never disagree about how big the room is. */}
             <button onClick={() => setRoomSizeSheet(selected)}
@@ -1151,6 +1298,10 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                 : 'Set size'}
             </button>
             <button onClick={rotateSel} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><RotateCw size={16} /> Rotate room</button>
+            {/* Take the room back off the plan and return it to the tray. It is only a layout
+                change: the room, its sketch and everything in it stay exactly as they were. */}
+            <button onClick={() => { setBlocks(bs => bs.filter(b => b.roomId !== selected)); setSelected(null); }}
+                    className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95 text-gray-600"><Archive size={16} /> To tray</button>
             <button onClick={toggleAffected} className={`rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95 ${selAffected ? 'bg-white text-gray-600' : 'bg-sky text-white'}`}>
               {selAffected ? <><Trash2 size={16} /> Not affected</> : <><Check size={16} /> Mark affected</>}
             </button>
@@ -1160,6 +1311,35 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
           </div>
         )}
       </div>
+
+      {/* THE ROOM TRAY. Unplaced rooms live here as shape chips. Tap one to drop it into the
+          middle of the view, or drag it exactly where it goes; it clicks flush to the nearest
+          wall on drop. This is the assembly workflow: no hunting, no precision drag, no zoom. */}
+      {tool === 'select' && dockedRooms.length > 0 && (
+        <div className="bg-white border-t border-gray-100">
+          <div className="flex items-center justify-between px-3 pt-2">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Rooms to place ({dockedRooms.length})</span>
+            <button onClick={autoArrangeAll} className="text-[11px] font-bold text-sky flex items-center gap-1 active:scale-95"><LayoutGrid size={13} /> Auto-arrange all</button>
+          </div>
+          <div className="flex gap-2 px-3 pt-1.5 pb-1 overflow-x-auto">
+            {dockedRooms.map(r => {
+              const fp = footprints[r.id];
+              const walls = fp ? placedWalls(fp, { roomId: r.id, x: 0, y: 0, rotation: 0 } as any) : [];
+              return (
+                <button key={r.id}
+                  onPointerDown={e => onRoomDockDown(e, r.id)} onPointerMove={onRoomDockMove}
+                  onPointerUp={onRoomDockUp} onPointerCancel={onRoomDockCancel}
+                  style={{ touchAction: 'none' }}
+                  className="shrink-0 w-[80px] flex flex-col items-center gap-1 py-2 rounded-2xl bg-gray-50 active:bg-sky-soft">
+                  <RoomThumb walls={walls} />
+                  <span className="text-[10px] font-semibold text-gray-600 leading-tight text-center truncate w-full px-1">{r.name}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-center text-[10px] text-gray-400 pb-1.5">Tap a room to drop it in, or drag it exactly where it goes. It clicks onto the nearest wall.</p>
+        </div>
+      )}
 
       {tool === 'space' && (
         <div className="bg-white border-t border-gray-100 px-3 py-2">
@@ -1211,7 +1391,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Rotate room turns just this room. The compass at the bottom right turns the whole map.' : 'Snapping is off · Drag to position · Rotate room turns just this room') : 'Tap a room to select it, then tap its size to change it. Tap an OPENING to re-measure it.')}
+        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Rotate room turns just this room. To tray takes it off the plan. The compass turns the whole map.' : 'Snapping is off · Drag to position · Rotate room turns just this room') : dockedRooms.length > 0 ? 'Tap or drag a room from the tray below to drop it onto the plan. Tap a placed room to select it, drag to nudge.' : 'Tap a room to select it, then tap its size to change it. Tap an OPENING to re-measure it.')}
         {tool === 'space' && (spaceMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Draw an L-shaped hall if that is the shape.' : 'Tap TYPE EXACT SIZE and the space draws itself. Or drag a box from the anchor corner.')}
         {isOpening && `Drag the ${OPENING_LABEL[doorKind].toLowerCase()} onto a wall, then measure it. It mirrors onto a shared wall.`}
         {isPlace && 'Drag onto the map. The preview shows exactly where it lands, release to drop.'}
@@ -1355,6 +1535,16 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         <div className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-1/2 opacity-80 drop-shadow-lg"
              style={{ left: paletteGhost.x, top: paletteGhost.y }}>
           <PlanGlyph kind={paletteGhost.kind} />
+        </div>
+      )}
+
+      {/* floating room chip while dragging a room out of the tray, before it is over canvas */}
+      {roomGhost && !roomGhost.over && (
+        <div className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-1/2"
+             style={{ left: roomGhost.x, top: roomGhost.y }}>
+          <div className="px-2.5 py-1.5 rounded-xl bg-navy text-white text-[11px] font-bold shadow-lg">
+            {rooms.find(r => r.id === roomGhost.roomId)?.name ?? 'Room'}
+          </div>
         </div>
       )}
     </div>
