@@ -23,6 +23,11 @@ const TYPE_LABEL: Record<string, string> = {
 };
 const docName = (d: Doc) => d.title || TYPE_LABEL[d.type] || 'Report';
 
+// The name the saved / shared file carries: readable words and spaces, no underscores.
+// "&" becomes "and", and only characters a file system actually rejects are removed.
+const prettyName = (d: Doc) =>
+  docName(d).replace(/&/g, 'and').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Report';
+
 type BusyKey = 'report' | 'measurements' | 'log' | 'pack' | 'esx';
 
 // Every generator says, in its own words, what it produces and who reads it. Each point
@@ -229,7 +234,7 @@ export default function Documents() {
   async function downloadEsx(d: Doc) {
     if (!d.storage_path) return;
     const { data } = await supabase.storage.from('resto-media')
-      .createSignedUrl(d.storage_path, 3600, { download: `${docName(d).replace(/[^\w.-]+/g, '_')}.esx` });
+      .createSignedUrl(d.storage_path, 3600, { download: `${prettyName(d)}.esx` });
     if (data?.signedUrl) window.location.href = data.signedUrl;
   }
 
@@ -264,9 +269,9 @@ export default function Documents() {
     const t = session?.access_token;
     if (!t) { setPreview({ doc: d, url: null, file: null, fileName: '', loading: false, error: 'Please sign in again.' }); return; }
 
-    const clean = docName(d).replace(/[^\w.-]+/g, '_').replace(/_+/g, '_');
-    const fileName = `${clean}.pdf`;
-    const src = `${window.location.origin}/api/resto/document/${d.id}/${clean}.pdf?t=${encodeURIComponent(t)}`;
+    const fileName = `${prettyName(d)}.pdf`;
+    const slug = prettyName(d).toLowerCase().replace(/[^\w]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'report';
+    const src = `${window.location.origin}/api/resto/document/${d.id}/${slug}.pdf?t=${encodeURIComponent(t)}`;
     try {
       const res = await fetch(src);
       if (!res.ok) throw new Error(`the server returned ${res.status}`);
@@ -451,10 +456,10 @@ export default function Documents() {
               {canShareFile(preview.file) ? (
                 <>
                   <button onClick={() => void sharePdf()} className="btn-primary w-full py-3.5 justify-center text-sm">
-                    <Share size={17} /> Save or share PDF
+                    <Share size={17} /> Save or share
                   </button>
                   <p className="text-[11.5px] text-gray-500 text-center mt-2.5 leading-relaxed">
-                    Opens your phone's share sheet with the PDF attached. Tap <span className="font-semibold text-gray-700">Save to Files</span> to keep it, or send it to Mail or Messages and it goes as a real PDF, not text.
+                    Opens the share sheet with the PDF attached. Save to Files, or send to Mail or Messages.
                   </p>
                 </>
               ) : (
@@ -463,7 +468,7 @@ export default function Documents() {
                     <Download size={17} /> Download PDF
                   </a>
                   <p className="text-[11.5px] text-gray-500 text-center mt-2.5 leading-relaxed">
-                    Saves the PDF to your downloads.
+                    Saves to your downloads.
                   </p>
                 </>
               )}
