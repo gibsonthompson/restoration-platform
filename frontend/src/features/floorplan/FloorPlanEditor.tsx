@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   X, Save, RotateCw, Plus, Minus, Grid3x3, DoorOpen, MousePointer2,
-  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler
+  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler, Info
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from '../sketch/SceneLayers';
@@ -22,6 +22,7 @@ import {
   unplacePoint, roomOutline, sceneFromWorldPolygon, snap, autoArrange, computeWallSnap,
   type Block, type Footprint, type WallSnap
 } from './floorPlanModel';
+import FloorPlanLegend from './FloorPlanLegend';
 
 interface RoomRow { id: string; name: string; length_ft: number | null; width_ft: number | null; height_ft?: number | null; affected?: boolean | null; sort_order?: number | null }
 type GKind = 'idle' | 'pan' | 'drag' | 'place' | 'rect';
@@ -214,6 +215,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const [spaceMode, setSpaceMode] = useState<SpaceMode>('rect');
   const [showGrid, setShowGrid] = useState(true);
   const [magnet, setMagnet] = useState(true);
+  const [showLegend, setShowLegend] = useState(false);
   const [wallSnap, setWallSnap] = useState<WallSnap | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -896,6 +898,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         <div className="flex-1 text-center font-display font-bold text-[15px] truncate px-1">{structureName} · Floor plan</div>
         <button onClick={() => setMagnet(v => !v)} className={`p-2 rounded-xl active:bg-gray-100 ${magnet ? 'text-sky' : 'text-gray-400'}`}><Magnet size={20} /></button>
         <button onClick={() => setShowGrid(v => !v)} className={`p-2 rounded-xl active:bg-gray-100 ${showGrid ? 'text-sky' : 'text-gray-400'}`}><Grid3x3 size={20} /></button>
+        <button onClick={() => setShowLegend(v => !v)} aria-label="Legend" className={`p-2 rounded-xl active:bg-gray-100 ${showLegend ? 'text-sky' : 'text-gray-400'}`}><Info size={20} /></button>
         <button onClick={save} disabled={saving} className="ml-1 btn-primary py-2 px-4 text-sm disabled:opacity-50"><Save size={16} /> Save</button>
       </div>
 
@@ -1059,6 +1062,23 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
               </g>
             )}
           </svg>
+        )}
+
+        {/* Legend / key for the plan glyphs. A dismissible overlay in the top-left, so it
+            explains the door, window, cased opening and missing-wall symbols on demand
+            without eating canvas the rest of the time. stopPropagation keeps a tap on the
+            key from starting a pan or a placement on the canvas underneath. */}
+        {showLegend && (
+          <div className="absolute top-3 left-3 z-20 max-w-[92%]"
+               onPointerDown={e => e.stopPropagation()}>
+            <div className="relative">
+              <FloorPlanLegend />
+              <button onClick={() => setShowLegend(false)} aria-label="Close legend"
+                      className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-navy text-white flex items-center justify-center shadow-soft active:scale-95">
+                <X size={14} />
+              </button>
+            </div>
+          </div>
         )}
 
         {rectDraft && (
