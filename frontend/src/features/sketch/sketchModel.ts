@@ -258,13 +258,21 @@ export function openingGeom(wall: Poly, op: Opening): OpeningGeom {
   const B: Pt = [cx + dir[0] * half, cy + dir[1] * half];
   return { A, B, dir, nrm, center: [cx, cy], gapLen: half * 2 };
 }
+// Tap ANYWHERE along the opening's drawn span (A..B) to hit it, not just a small circle
+// at its midpoint. A door glyph is ~2 ft 6 in wide, so a midpoint-only test left most of
+// it dead and a slightly-off tap fell through to the wall edge instead. Testing the whole
+// segment is what makes "tap a door to re-measure or delete it" behave the way it looks.
+// r is the reach around that span, and the NEAREST opening within reach wins so two doors
+// close together resolve to the one actually under the finger.
 export function hitOpening(scene: Scene, x: number, y: number, r = 26): Opening | null {
+  let best: Opening | null = null, bestD = r;
   for (const op of scene.openings ?? []) {
     const w = wallById(scene, op.wallId); if (!w) continue;
     const g = openingGeom(w, op);
-    if (Math.hypot(g.center[0] - x, g.center[1] - y) <= r) return op;
+    const d = distToSeg(x, y, g.A, g.B);
+    if (d <= bestD) { bestD = d; best = op; }
   }
-  return null;
+  return best;
 }
 export function nearestWallEdge(scene: Scene, x: number, y: number): { wallId: string; edge: number; t: number; dist: number; edgeLen: number } | null {
   let best: { wallId: string; edge: number; t: number; dist: number; edgeLen: number } | null = null, bd = Infinity;
