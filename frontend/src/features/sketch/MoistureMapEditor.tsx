@@ -133,6 +133,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [sizeSheet, setSizeSheet] = useState(false);
   const [openingSheet, setOpeningSheet] = useState<OpeningDraft | null>(null);
   const [showDims, setShowDims] = useState(false);
+  // Wall lengths are drawn on the sketch in EVERY tool by default, not just Move, so a tech
+  // reads each wall without switching modes. The ruler button toggles them off when the
+  // canvas is busy. On by default, because the numbers are the point of the sketch.
+  const [showWalls, setShowWalls] = useState(true);
   const [confirmExit, setConfirmExit] = useState(false);
   // Any edit at all marks the sketch dirty. Closing without saving is how a tech loses
   // an hour of work in a wet house, so we ask rather than silently discard.
@@ -809,8 +813,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       })()}
       <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} rot={view.rot} />
 
-      {/* EVERY WALL SHOWS ITS EXACT LENGTH in move mode. Tap one to type the real number. */}
-      {tool === 'move' && scene.walls.map(w => w.points.map((_pt, ei) => {
+      {/* EVERY WALL SHOWS ITS EXACT LENGTH, in every tool, so a tech reads each wall without
+          switching to Move. The ruler button hides them when the canvas is busy; tapping a
+          wall in Move still selects it to type the real number. */}
+      {showWalls && scene.walls.map(w => w.points.map((_pt, ei) => {
         const n = w.points.length;
         const a = w.points[ei], b = w.points[(ei + 1) % n];
         const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -1015,6 +1021,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
+          {/* Show or hide every wall's length on the sketch. On by default; turn it off when
+              the canvas is busy and you want the drawing clean. */}
+          <button onClick={() => setShowWalls(v => !v)} aria-label="Show wall lengths"
+            className={`rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 ${showWalls ? 'bg-navy text-white' : 'bg-white text-navy'}`}><Ruler size={18} /></button>
           {/* Turn the plan to face the way you are standing. Tap to rotate, hold-free
               double tap on the compass to snap back to north. */}
           <button onClick={() => setView(v => ({ ...v, rot: normRot(v.rot + 90) }))}

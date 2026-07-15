@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Ruler, ChevronDown, TriangleAlert, Pencil } from 'lucide-react';
 import { formatFeetInches } from '../../lib/feetInches';
-import { roomDimensions, OPENING_LABEL, type Scene } from './sketchModel';
+import { roomDimensions, polyEdgeLenFt, OPENING_LABEL, type Scene } from './sketchModel';
 
 // The wall / square-foot panel. This is the thing that was missing: the engine could
 // compute all of it, and nothing in the app ever showed it.
@@ -16,6 +16,13 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
 }) {
   const [open, setOpen] = useState(true);
   const d = roomDimensions(scene, ceilingHeightFt);
+
+  // Each wall's own length, in draw order, so a tech can read them off one at a time and
+  // see that they add up to the perimeter. The sketch labels these on the canvas too; this
+  // is the same numbers in a list, for when the canvas is busy or being scrubbed on paper.
+  const wallSegs = scene.walls.flatMap(w =>
+    w.points.map((_p, ei) => ({ key: `${w.id}-${ei}`, len: polyEdgeLenFt(w.points, ei) }))
+  ).filter(s => s.len >= 0.3);
 
   if (!d.F) {
     return (
@@ -71,6 +78,25 @@ export function RoomDimensions({ scene, ceilingHeightFt, onEditCeiling }: {
           <Row label="Floor area" value={`${d.F} sq ft`} sub={`${d.SY} sq yards`} />
           <Row label="Ceiling area" value={`${d.C} sq ft`} sub="flat ceiling" />
           <Row label="Perimeter" value={`${d.PF} ft`} sub="all the way around" />
+
+          {/* EACH WALL, one length at a time. The perimeter is the sum of these, shown so a
+              tech can check a single wall's number without hunting for it on the canvas. */}
+          {wallSegs.length > 0 && (
+            <div className="mt-2 bg-gray-50 rounded-xl p-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-1.5">Each wall</div>
+              {wallSegs.map((s, i) => (
+                <div key={s.key} className="flex items-baseline justify-between py-0.5">
+                  <span className="text-[12px] text-gray-500">Wall {i + 1}</span>
+                  <span className="text-[13px] font-semibold text-navy tabular-nums">{formatFeetInches(s.len)}</span>
+                </div>
+              ))}
+              <div className="h-px bg-gray-200 my-1.5" />
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] font-bold text-gray-600">All the way around</span>
+                <span className="text-[13px] font-bold text-navy tabular-nums">{d.PF} ft</span>
+              </div>
+            </div>
+          )}
 
           {/* THE WALL MATH, shown step by step. This is the number that pays for paint
               and drywall, so it has to be defensible line by line, not a black box. */}
