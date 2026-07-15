@@ -24,8 +24,34 @@ export async function signedUrl(path: string, expiresIn = 3600): Promise<string 
   return data?.signedUrl ?? null;
 }
 
+// Delete every stored file that belongs to a room. Deleting the resto_rooms row cascades
+// its database rows (media, sketches, notes, contents, mold scans), but a row delete never
+// touches the storage bucket, so the image and video files would otherwise be orphaned.
+//
+// Every file for a room lives under {org}/{claim}/{room}/, which is a flat folder of
+// {uuid}.ext objects, so one listing of that prefix is the whole set. list() is paged, so
+// we walk the pages rather than trusting a single call to return everything.
+export async function removeRoomMedia(orgId: string, claimId: string, roomId: string): Promise<void> {
+  const prefix = `${orgId}/${claimId}/${roomId}`;
+  const pageSize = 100;
+  const toRemove: string[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase.storage.from(BUCKET).list(prefix, { limit: pageSize, offset });
+    if (error) throw error;
+    const batch = data ?? [];
+    for (const f of batch) {
+      if (f.name) toRemove.push(`${prefix}/${f.name}`);
+    }
+    if (batch.length < pageSize) break;
+  }
+  if (toRemove.length) {
+    const { error } = await supabase.storage.from(BUCKET).remove(toRemove);
+    if (error) throw error;
+  }
+}
+
 // Best-effort device GPS for stamping field photos. Resolves null on denial,
-// timeout, or lack of support — never blocks or throws, so uploads still work.
+// timeout, or lack of support, never blocks or throws, so uploads still work.
 export async function getPosition(): Promise<{ lat: number; lng: number } | null> {
   if (typeof navigator === 'undefined' || !navigator.geolocation) return null;
   return new Promise((resolve) => {

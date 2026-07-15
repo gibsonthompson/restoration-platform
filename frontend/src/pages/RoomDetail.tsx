@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyNote } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyNote, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SubHeader } from '../components/SubHeader';
-import { uploadMedia, signedUrl, getPositionIfEnabled } from '../lib/storage';
+import { uploadMedia, signedUrl, getPositionIfEnabled, removeRoomMedia } from '../lib/storage';
 import { ContentsTab } from '../features/contents/ContentsTab';
 import { SketchesTab } from '../features/sketch/SketchesTab';
 import type { Note, Room } from '../types/models';
@@ -58,6 +58,7 @@ function joinList(items: string[]): string {
 export default function RoomDetail() {
   const { claimId, structureId, roomId } = useParams();
   const { activeOrg } = useOrg();
+  const nav = useNavigate();
   const [room, setRoom] = useState<Room | null>(null);
   const [tab, setTab] = useState<Tab>('photos');
   const [notes, setNotes] = useState<Note[]>([]);
@@ -70,6 +71,8 @@ export default function RoomDetail() {
   const [scanning, setScanning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savingScope, setSavingScope] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
 
@@ -134,6 +137,47 @@ export default function RoomDetail() {
       alert('Could not update the scope: ' + (e?.message ?? 'unknown error'));
     } finally {
       setSavingScope(false);
+    }
+  }
+
+  // Delete the whole room and everything under it. Order matters:
+  //   1. Strip this room's block from the structure floor plan FIRST. It is a JSON blob,
+  //      not a foreign key, so nothing else removes it, and doing it first means a failure
+  //      here leaves the room fully intact and the delete can be retried.
+  //   2. Delete the resto_rooms row. The database cascades the sketches, notes, contents,
+  //      media rows and mold scans (migration 20260715_room_delete_cascade.sql).
+  //   3. Remove the room's photo and video FILES from the bucket. Best effort: the room is
+  //      already gone and an orphaned file is harmless, so a storage hiccup must not strand
+  //      the tech looking at a room that no longer exists.
+  async function deleteRoom() {
+    if (!room || !activeOrg || !claimId || !roomId || deleting) return;
+    setDeleting(true);
+    try {
+      if (structureId) {
+        const { data: fp } = await supabase.from('resto_structure_floorplans')
+          .select('layout_json').eq('structure_id', structureId).maybeSingle();
+        const layout = (fp as any)?.layout_json;
+        const blocks = layout?.blocks;
+        if (Array.isArray(blocks)) {
+          const next = blocks.filter((b: any) => b.roomId !== roomId);
+          if (next.length !== blocks.length) {
+            const { error } = await supabase.from('resto_structure_floorplans')
+              .update({ layout_json: { ...layout, blocks: next }, updated_at: new Date().toISOString() })
+              .eq('structure_id', structureId);
+            if (error) throw new Error('Could not update the floor plan: ' + error.message);
+          }
+        }
+      }
+
+      const { error } = await supabase.from('resto_rooms').delete().eq('id', roomId);
+      if (error) throw new Error('Could not delete the room: ' + error.message);
+
+      try { await removeRoomMedia(activeOrg.id, claimId, roomId); } catch { /* orphaned files are harmless */ }
+
+      nav(`/claims/${claimId}/structures/${structureId}`);
+    } catch (e: any) {
+      alert(e?.message ?? 'Could not delete the room.');
+      setDeleting(false);   // stay on the confirm so it can be tried again
     }
   }
 
@@ -340,6 +384,15 @@ export default function RoomDetail() {
         )}
       </div>
 
+      {/* Remove the whole room and everything in it. Kept quiet at the very bottom, behind
+          a confirm, because it is irreversible. */}
+      <div className="px-4 pb-10 pt-1">
+        <button onClick={() => setConfirmDelete(true)}
+          className="w-full py-3 rounded-xl font-semibold text-red-600 border border-red-200 active:bg-red-50 flex items-center justify-center gap-2">
+          <Trash2 size={16} /> Delete this room
+        </button>
+      </div>
+
       {/* Photo viewer + mold scan */}
       {viewer && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3"
@@ -397,6 +450,27 @@ export default function RoomDetail() {
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deleting a room takes its photos, notes, contents and moisture maps with it. Ask. */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-[75] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12vh)' }}>
+          <div className="absolute inset-0 bg-navy/40" onClick={() => { if (!deleting) setConfirmDelete(false); }} />
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+            <div className="font-display font-bold text-lg text-navy">Delete {room.name}?</div>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              This permanently removes the room and everything in it: its photos, notes, contents and moisture maps. It cannot be undone.
+            </p>
+            <button onClick={deleteRoom} disabled={deleting}
+              className="w-full py-3 mt-4 rounded-xl font-semibold text-white bg-red-600 active:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2">
+              <Trash2 size={16} /> {deleting ? 'Deleting...' : `Delete ${room.name}`}
+            </button>
+            <button onClick={() => setConfirmDelete(false)} disabled={deleting}
+              className="w-full py-3 mt-2 rounded-xl font-semibold text-gray-600 active:bg-gray-50 disabled:opacity-50">
+              Cancel
+            </button>
           </div>
         </div>
       )}
