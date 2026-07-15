@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   X, Save, RotateCw, Plus, Minus, Grid3x3, DoorOpen, MousePointer2,
-  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler, Info
+  SquarePlus, Droplet, MapPin, Trash2, Check, Magnet, Compass, Ruler, Info, Navigation
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from '../sketch/SceneLayers';
@@ -1088,13 +1088,17 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
-          {/* Turn the plan to face the way you are standing in the building. */}
-          <button onClick={() => setView(v => ({ ...v, rot: normRot(v.rot + 90) }))}
-            className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 text-navy"><RotateCw size={18} /></button>
+          {/* MAP-VIEW rotation, not room rotation. This turns the whole plan so it faces
+              the way the tech is standing. It used to wear the same RotateCw icon as the
+              room's own Rotate button, which is how "rotate the room" ended up spinning
+              the entire map. It now reads as a compass (orient the map), and the room's
+              Rotate keeps the rotate icon, so the two can no longer be confused. */}
+          <button onClick={() => setView(v => ({ ...v, rot: normRot(v.rot + 90) }))} aria-label="Rotate the map view"
+            className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 text-navy"><Compass size={18} /></button>
           {view.rot !== 0 && (
-            <button onClick={() => setView(v => ({ ...v, rot: 0 }))}
+            <button onClick={() => setView(v => ({ ...v, rot: 0 }))} aria-label="Reset the map to north"
               className="bg-navy text-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95">
-              <Compass size={18} style={{ transform: `rotate(${-view.rot}deg)` }} />
+              <Navigation size={16} style={{ transform: `rotate(${-view.rot}deg)` }} />
             </button>
           )}
           <button onClick={() => zoomBy(1.25)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Plus size={18} /></button>
@@ -1146,7 +1150,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
                 ? `${formatFeetInches(selSize.w)} \u00d7 ${formatFeetInches(selSize.l)}`
                 : 'Set size'}
             </button>
-            <button onClick={rotateSel} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><RotateCw size={16} /> Rotate</button>
+            <button onClick={rotateSel} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><RotateCw size={16} /> Rotate room</button>
             <button onClick={toggleAffected} className={`rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95 ${selAffected ? 'bg-white text-gray-600' : 'bg-sky text-white'}`}>
               {selAffected ? <><Trash2 size={16} /> Not affected</> : <><Check size={16} /> Mark affected</>}
             </button>
@@ -1207,7 +1211,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Drag a room near another and it snaps flush · Rotate in 90 degree steps' : 'Snapping is off · Drag to position') : 'Tap a room to select it, then tap its size to change it. Tap an OPENING to re-measure it.')}
+        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Rotate room turns just this room. The compass at the bottom right turns the whole map.' : 'Snapping is off · Drag to position · Rotate room turns just this room') : 'Tap a room to select it, then tap its size to change it. Tap an OPENING to re-measure it.')}
         {tool === 'space' && (spaceMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Draw an L-shaped hall if that is the shape.' : 'Tap TYPE EXACT SIZE and the space draws itself. Or drag a box from the anchor corner.')}
         {isOpening && `Drag the ${OPENING_LABEL[doorKind].toLowerCase()} onto a wall, then measure it. It mirrors onto a shared wall.`}
         {isPlace && 'Drag onto the map. The preview shows exactly where it lands, release to drop.'}
