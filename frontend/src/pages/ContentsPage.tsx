@@ -55,9 +55,9 @@ export default function ContentsPage() {
     void loadSummary(); // keep header counts fresh as items are added
   }
 
+  // Counts only. Contents are NOT priced here: Xactimate and XactContents value them
+  // from the carrier price list. RCV / ACV were removed for that reason.
   const lossItems = items.filter(i => isLoss(i.disposition));
-  const totalRcv = lossItems.reduce((s, i) => s + (Number(i.replacement_cost) || 0) * (i.quantity || 1), 0);
-  const totalAcv = lossItems.reduce((s, i) => s + (Number(i.acv) || 0) * (i.quantity || 1), 0);
   const salvage = items.filter(i => i.disposition === 'restorable').length;
   const countFor = (roomId: string) => items.filter(i => i.room_id === roomId).length;
   const lossFor = (roomId: string) => items.filter(i => i.room_id === roomId && isLoss(i.disposition)).length;
@@ -78,9 +78,8 @@ export default function ContentsPage() {
           <div className="bg-white/10 rounded-2xl p-3"><div className="text-[22px] font-bold leading-none text-red-300">{lossItems.length}</div><div className="text-[11px] opacity-70 mt-1">total loss</div></div>
         </div>
         {lossItems.length > 0 && (
-          <div className="bg-white/10 rounded-2xl p-3 mt-2 flex justify-between items-center text-sm">
-            <span className="opacity-80 font-medium">Non-salvageable claim</span>
-            <span className="font-bold">${totalRcv.toFixed(0)} RCV · ${totalAcv.toFixed(0)} ACV</span>
+          <div className="bg-white/10 rounded-2xl px-3 py-2.5 mt-2 text-[12px] opacity-80 leading-snug">
+            Non-salvageable items are valued in Xactimate and XactContents from the carrier price list, not here.
           </div>
         )}
       </div>
