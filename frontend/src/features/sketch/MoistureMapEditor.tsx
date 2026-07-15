@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass } from 'lucide-react';
+import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass, Scissors } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import { RoomDimensions } from './RoomDimensions';
@@ -54,6 +54,84 @@ const ftLabel = (u: number) => formatFeetInches(u / UNITS_PER_FT);
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
 const OPENING_KINDS: OpeningKind[] = ['door', 'window', 'opening', 'missing_wall'];
+
+// ---- SPLITTING ONE POLYGON OUT INTO ITS OWN ROOM -------------------------
+// A closet drawn as a second wall polygon in this sketch is invisible to the report and
+// the Xactimate export, which only take the largest polygon. Splitting moves that polygon,
+// and everything physically in it, into a brand new room.
+//
+// Ray-cast point-in-polygon, against the CLOSET polygon specifically (not hitWall, which
+// would return whichever overlapping polygon comes first, and a nested closet sits inside
+// the main room too).
+function ptInPoly(p: Pt, poly: Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > p[1]) !== (yj > p[1])) && (p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function wetCentroid(w: any): Pt {
+  const pts: Pt[] = [...(w.points ?? []), ...((w.strokes ?? []).flat())];
+  if (!pts.length) return [0, 0];
+  let sx = 0, sy = 0; for (const p of pts) { sx += p[0]; sy += p[1]; }
+  return [sx / pts.length, sy / pts.length];
+}
+function containCenter(c: any): Pt {
+  if (c.x != null && c.y != null) return [c.x, c.y];
+  if (c.from && c.to) return [(c.from[0] + c.to[0]) / 2, (c.from[1] + c.to[1]) / 2];
+  return [0, 0];
+}
+
+// Split a scene in two around one wall polygon. Location decides readings, equipment and
+// containments (point in the closet outline); wall attachment decides openings and flood
+// cuts (their wallId). Arrows stay with the main room, since they show flow across the
+// whole loss. Nothing is duplicated: every item lands in exactly one of the two scenes.
+function partitionScene(scene: Scene, wallId: string): { closet: Scene; remain: Scene } | null {
+  const closetWall = scene.walls.find(w => w.id === wallId);
+  if (!closetWall) return null;
+  const poly = closetWall.points;
+  const inClo = (p: Pt) => ptInPoly(p, poly);
+
+  const cWet = scene.wetAreas.filter(w => inClo(wetCentroid(w)));
+  const cWetIds = new Set(cWet.map(w => w.id));
+  const cPts = (scene.moisturePoints ?? []).filter(m => inClo([m.x, m.y]));
+  const cPtIds = new Set(cPts.map(m => m.id));
+  const cEq = scene.equipment.filter(e => inClo([e.x, e.y]));
+  const cEqIds = new Set(cEq.map(e => e.id));
+  const cOp = (scene.openings ?? []).filter(o => o.wallId === wallId);
+  const cOpIds = new Set(cOp.map(o => o.id));
+  const cFc = (scene.floodCuts ?? []).filter(f => f.wallId === wallId);
+  const cCon = (scene.containments ?? []).filter(c => inClo(containCenter(c)));
+  const cConIds = new Set(cCon.map(c => c.id));
+  const originIn = !!(scene.originOfLoss && inClo(scene.originOfLoss));
+
+  const closet = normalizeScene({
+    walls: [closetWall],
+    wetAreas: cWet,
+    moisturePoints: cPts,
+    equipment: cEq,
+    openings: cOp,
+    floodCuts: cFc,
+    containments: cCon,
+    arrows: [],
+    originOfLoss: originIn ? scene.originOfLoss : undefined,
+    classOfLoss: scene.classOfLoss
+  } as any);
+
+  const remain: Scene = {
+    ...scene,
+    walls: scene.walls.filter(w => w.id !== wallId),
+    wetAreas: scene.wetAreas.filter(w => !cWetIds.has(w.id)),
+    moisturePoints: (scene.moisturePoints ?? []).filter(m => !cPtIds.has(m.id)),
+    equipment: scene.equipment.filter(e => !cEqIds.has(e.id)),
+    openings: (scene.openings ?? []).filter(o => !cOpIds.has(o.id)),
+    floodCuts: (scene.floodCuts ?? []).filter(f => f.wallId !== wallId),
+    containments: (scene.containments ?? []).filter(c => !cConIds.has(c.id)),
+    originOfLoss: originIn ? undefined : scene.originOfLoss
+  };
+  return { closet, remain };
+}
 
 function PlaceGlyph({ kind, size = 26 }: { kind: string; size?: number }) {
   if (kind === 'air_mover' || kind === 'dehumidifier' || kind === 'air_scrubber') {
@@ -137,9 +215,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // reads each wall without switching modes. The ruler button toggles them off when the
   // canvas is busy. On by default, because the numbers are the point of the sketch.
   const [showWalls, setShowWalls] = useState(true);
-  // A moisture map is ONE room. Drawing a second room inside an existing one is always a
-  // mistake, so it is blocked with a brief note rather than silently allowed.
-  const [roomWarn, setRoomWarn] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState<string | null>(null);
+  // Splitting a second polygon (a closet drawn in this sketch) out into its own room.
+  const [resolvedStructureId, setResolvedStructureId] = useState<string | null>(structureId ?? null);
+  const [splitName, setSplitName] = useState<{ wallId: string; name: string } | null>(null);
+  const [splitting, setSplitting] = useState(false);
+  const [splitDone, setSplitDone] = useState<string | null>(null);
   const [confirmExit, setConfirmExit] = useState(false);
   // Any edit at all marks the sketch dirty. Closing without saving is how a tech loses
   // an hour of work in a wet house, so we ask rather than silently discard.
@@ -147,12 +228,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const roomWarnTimer = useRef<number | null>(null);
+  const editSnapped = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; edgeTap?: { wallId: string; edge: number }; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end'; floodGrab?: number }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; openingTap?: string; edgeTap?: { wallId: string; edge: number }; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end'; floodGrab?: number }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -162,6 +243,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     (async () => {
       const { data: room } = await supabase.from('resto_rooms').select('height_ft, structure_id').eq('id', roomId).maybeSingle();
       const sid = structureId || (room as any)?.structure_id;
+      if (sid) setResolvedStructureId(sid);
       let structDefault: number | null = null;
       if (sid) {
         const { data: st } = await supabase.from('resto_structures').select('default_ceiling_height_ft').eq('id', sid).maybeSingle();
@@ -186,7 +268,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     setView({ k, rot: 0, tx: (size.w - SCENE_SIZE * k) / 2, ty: (size.h - SCENE_SIZE * k) / 2 });
     inited.current = true;
   }, [size]);
-  useEffect(() => () => { if (roomWarnTimer.current) window.clearTimeout(roomWarnTimer.current); }, []);
 
   function toPixel(cx: number, cy: number): Pt {
     const svg = svgRef.current; const ctm = svg?.getScreenCTM();
@@ -245,11 +326,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // Is this point inside a room already on the map? This is what stops a room being drawn
   // inside another room: hitWall is a point-in-polygon test against every wall outline.
   const pointInAnyRoom = (p: Pt) => !!hitWall(scene, p[0], p[1]);
-  function warnRoomInside() {
-    setRoomWarn('This map already has a room here. Draw outside it, or use Move to reshape.');
-    if (roomWarnTimer.current) window.clearTimeout(roomWarnTimer.current);
-    roomWarnTimer.current = window.setTimeout(() => setRoomWarn(null), 2600);
-  }
+  // Open the editor for an opening already on a wall. Tapping a door, window, opening, or
+  // missing wall lands here so its type and size can be changed, or it can be removed.
+  function openOpeningEditor(id: string) { editSnapped.current = false; setSelectedId(id); setSelEdge(null); setEditOpen(id); }
 
   // ---- TYPE AN EXACT WALL LENGTH -------------------------------------------
   function applyEdgeLength(ft: number) {
@@ -295,7 +374,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       else {
         const opn = hitOpening(scene, s[0], s[1]);
         const ar = opn ? null : hitArrow(scene, s[0], s[1]);
-        if (opn) { setSelectedId(opn.id); setSelEdge(null); g.current.kind = 'pan'; }
+        if (opn) { setSelectedId(opn.id); setSelEdge(null); g.current.kind = 'pan'; g.current.openingTap = opn.id; }
         else if (ar) { setSelectedId(ar.id); setSelEdge(null); g.current.kind = 'pan'; }
         else {
           // Tap a wall EDGE to select it and reveal its measurement.
@@ -306,9 +385,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       }
     } else if (tool === 'room') {
       // Poly pans on down (a corner is added on tap), so it is guarded at the tap instead.
-      // Rectangle starts its draft here, so block it the moment it would begin inside a room.
+      // A rectangle starts its draft here, so silently refuse if it would begin inside a room.
       if (roomMode === 'poly') { g.current.kind = 'pan'; }
-      else if (pointInAnyRoom(s)) { warnRoomInside(); g.current.kind = 'pan'; }
+      else if (pointInAnyRoom(s)) { g.current.kind = 'pan'; }
       else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
     } else if (tool === 'wet') {
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] }); setActive({ scene: s, px }); setGuide(null);
@@ -460,25 +539,28 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       const d = draft;
       const firstCorner = !(d?.kind === 'poly' && d.pts.length > 0);
       if (firstCorner && pointInAnyRoom(p)) {
-        warnRoomInside();   // do not start a custom room inside an existing one
+        /* silently refuse: no room inside a room */
       } else if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 30) {
         snapshot(); const pts = d.pts; setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] })); setDraft(null);
       } else {
         setDraft(d?.kind === 'poly' ? { kind: 'poly', pts: [...d.pts, p] } : { kind: 'poly', pts: [p] });
       }
+    } else if (g.current.kind === 'pan' && !g.current.moved && g.current.openingTap) {
+      // TAP AN OPENING to edit it: change its type, width, height, or remove it.
+      openOpeningEditor(g.current.openingTap);
     } else if (g.current.kind === 'pan' && !g.current.moved && g.current.edgeTap) {
       // TAP A WALL to select it. Its exact length appears, tappable to type.
       setSelEdge(g.current.edgeTap);
       setSelectedId(null);
     } else if (g.current.kind === 'pan' && !g.current.moved && g.current.wallTap) {
-      const id = g.current.wallTap;
-      const cur = scene.walls.find(w => w.id === id);
-      const mat = prompt('Material for this area (e.g. Drywall, Carpet, Subfloor)', cur?.material ?? '');
-      if (mat != null) { snapshot(); const m = mat.trim(); setScene(sc => ({ ...sc, walls: sc.walls.map(w => w.id === id ? { ...w, material: m || undefined } : w) })); }
+      // The polygon is now SELECTED (set in onDown). Its action bar at the bottom offers
+      // its material and, when this sketch holds more than one room outline, splitting it
+      // into its own room. No more surprise prompt on every tap inside a room.
+      setSelectedId(g.current.wallTap);
     } else if (g.current.kind === 'place' && active) {
       commitPlace(active.scene, g.current.editId);
     }
-    g.current.kind = 'idle'; g.current.id = undefined; g.current.idx = undefined; g.current.editId = undefined; g.current.wallTap = undefined; g.current.edgeTap = undefined; g.current.downScene = undefined;
+    g.current.kind = 'idle'; g.current.id = undefined; g.current.idx = undefined; g.current.editId = undefined; g.current.wallTap = undefined; g.current.openingTap = undefined; g.current.edgeTap = undefined; g.current.downScene = undefined;
     setActive(null); setGuide(null);
   }
 
@@ -538,7 +620,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const p = snapPoint(pxToScene([size.w / 2, size.h / 2])).p;
     const d = draft;
     const firstCorner = !(d?.kind === 'poly' && d.pts.length > 0);
-    if (firstCorner && pointInAnyRoom(p)) { warnRoomInside(); return; }
+    if (firstCorner && pointInAnyRoom(p)) { return; }
     if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 40) {
       snapshot(); const pts = d.pts;
       setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
@@ -564,7 +646,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   function createRectExact(widthFt: number, lengthFt: number) {
     const w = widthFt * UNITS_PER_FT, h = lengthFt * UNITS_PER_FT;
     const c = size.w ? pxToScene([size.w / 2, size.h / 2]) : ([SCENE_SIZE / 2, SCENE_SIZE / 2] as Pt);
-    if (pointInAnyRoom(c)) { setSizeSheet(false); warnRoomInside(); return; }
+    if (pointInAnyRoom(c)) { setSizeSheet(false); return; }
     const x = snapGrid(c[0] - w / 2, INCH), y = snapGrid(c[1] - h / 2, INCH);
     const pts: Pt[] = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
     snapshot();
@@ -585,6 +667,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       snapshot();
       setScene(sc => ({ ...sc, equipment: [...sc.equipment, { id: uid(), type: equipType, x: p[0], y: p[1] }] }));
     } else if (tool === 'door') {
+      // Tapping an opening that is already on the wall EDITS it, rather than dropping a
+      // second one on top of it.
+      const existing = hitOpening(scene, p[0], p[1]);
+      if (existing) { openOpeningEditor(existing.id); return; }
       const near = nearestWallEdge(scene, p[0], p[1]);
       if (near && near.dist < 45 && near.edgeLen > UNITS_PER_FT) {
         setOpeningSheet({
@@ -775,20 +861,84 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // An opening already on the wall, selected in Move mode. Mis-measuring a door is normal,
   // and the fix should not be "delete it and drag a new one onto the right wall again".
   const selOpen = selectedId ? (scene.openings ?? []).find(o => o.id === selectedId) ?? null : null;
+  // A whole room outline selected by tapping inside it (not an edge, not an opening).
+  const selWall = selectedId ? scene.walls.find(w => w.id === selectedId) ?? null : null;
+
+  // Tag a room outline's material. Was a prompt fired on every interior tap; now it is a
+  // deliberate button on the selected outline.
+  function setMaterial(wallId: string) {
+    const cur = scene.walls.find(w => w.id === wallId);
+    const mat = prompt('Material for this area (e.g. Drywall, Carpet, Subfloor)', cur?.material ?? '');
+    if (mat != null) { snapshot(); const m = mat.trim(); setScene(sc => ({ ...sc, walls: sc.walls.map(w => w.id === wallId ? { ...w, material: m || undefined } : w) })); }
+  }
+
+  // Promote one wall polygon (the closet) into its own resto_rooms row with its own sketch,
+  // and remove it from this one. New room + sketch are created FIRST, so a failure never
+  // strips the closet out of this map with nowhere for it to go. The remainder is written
+  // back here, and both rooms get their width/length refreshed since both shapes changed.
+  async function splitOutRoom(wallId: string, rawName: string) {
+    const sid = resolvedStructureId;
+    if (!sid) { alert('Could not find the structure for this room, so the closet cannot be split out. Open the room from the structure and try again.'); return; }
+    const parts = partitionScene(scene, wallId);
+    if (!parts) { setSplitName(null); return; }
+    const name = rawName.trim() || 'Closet';
+    setSplitting(true);
+    try {
+      const { data: sib } = await supabase.from('resto_rooms')
+        .select('sort_order').eq('structure_id', sid).order('sort_order', { ascending: false }).limit(1);
+      const nextSort = (Number((sib as any)?.[0]?.sort_order) || 0) + 1;
+
+      const cb = roomBBoxFt(parts.closet);
+      const { data: room, error: rErr } = await supabase.from('resto_rooms')
+        .insert({
+          org_id: orgId, structure_id: sid, name, sort_order: nextSort, affected: true,
+          width_ft: cb.widthFt > 0 ? Math.round(cb.widthFt * 10) / 10 : null,
+          length_ft: cb.lengthFt > 0 ? Math.round(cb.lengthFt * 10) / 10 : null,
+          height_ft: ceilingFt && ceilingFt > 0 ? ceilingFt : null
+        })
+        .select('id').single();
+      if (rErr || !room) throw new Error('Could not create the room: ' + (rErr?.message ?? 'no row came back'));
+      const newRoomId = (room as any).id;
+
+      const { error: skErr } = await supabase.from('resto_sketches')
+        .insert({ org_id: orgId, room_id: newRoomId, type: 'moisture_map', canvas_json: parts.closet as any });
+      if (skErr) throw new Error('Could not create the new room sketch: ' + skErr.message);
+
+      // Only now remove the closet from THIS sketch.
+      if (sketch?.id) {
+        const { error: uErr } = await supabase.from('resto_sketches')
+          .update({ canvas_json: parts.remain as any }).eq('id', sketch.id);
+        if (uErr) throw new Error(`"${name}" was created, but removing it from this map failed: ${uErr.message}. You can delete the extra outline here by hand.`);
+      } else {
+        const { error: iErr } = await supabase.from('resto_sketches')
+          .insert({ org_id: orgId, room_id: roomId, type: 'moisture_map', canvas_json: parts.remain as any });
+        if (iErr) throw new Error(`"${name}" was created, but saving this map failed: ${iErr.message}.`);
+      }
+
+      // This room shrank, so refresh its own dimensions. Best effort: the split already stuck.
+      const rb = roomBBoxFt(parts.remain);
+      if (rb.widthFt > 0 && rb.lengthFt > 0) {
+        await supabase.from('resto_rooms')
+          .update({ width_ft: Math.round(rb.widthFt * 10) / 10, length_ft: Math.round(rb.lengthFt * 10) / 10 })
+          .eq('id', roomId);
+      }
+
+      setScene(parts.remain);
+      setHistory([]);
+      setDirty(false);
+      setSelectedId(null);
+      setSplitName(null);
+      setSplitDone(name);
+    } catch (e: any) {
+      alert(e?.message ?? 'Could not split the room.');
+    } finally {
+      setSplitting(false);
+    }
+  }
   const selOpenSize = !selOpen ? ''
     : selOpen.kind === 'missing_wall' ? `${formatFeetInches(selOpen.widthFt)} wide, full height`
     : selOpen.heightFt ? `${formatFeetInches(selOpen.widthFt)} \u00d7 ${formatFeetInches(selOpen.heightFt)}`
     : `${formatFeetInches(selOpen.widthFt)}, height not measured`;
-  function measureSelectedOpening() {
-    if (!selOpen) return;
-    setOpeningSheet({
-      id: selOpen.id,
-      wallId: selOpen.wallId, edge: selOpen.edge, t: selOpen.t, kind: selOpen.kind,
-      edgeLenFt: edgeLenFt(scene, selOpen.wallId, selOpen.edge),
-      widthFt: selOpen.widthFt, heightFt: selOpen.heightFt,
-      step: 'width'
-    });
-  }
 
   const content = (
     <>
@@ -1075,11 +1225,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             {drawReadout}
           </div>
         )}
-        {roomWarn && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-500 text-white text-[12px] font-bold px-3.5 py-1.5 rounded-full pointer-events-none z-20 max-w-[92%] text-center shadow-lg">
-            {roomWarn}
-          </div>
-        )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
           {/* Show or hide measurements on the sketch: every wall length AND every opening
@@ -1111,7 +1256,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         )}
         {tool === 'move' && !selEdge && selOpen && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
-            <button onClick={measureSelectedOpening}
+            <button onClick={() => openOpeningEditor(selOpen.id)}
               className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-5 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2 min-w-0">
               <Ruler size={16} className="shrink-0" />
               <span className="truncate">{OPENING_LABEL[selOpen.kind]} {selOpenSize}</span>
@@ -1122,7 +1267,23 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             </button>
           </div>
         )}
-        {tool === 'move' && !selEdge && selectedId && !selOpen && (
+        {/* A whole room outline is selected: tag its material, or, when this sketch holds
+            more than one outline, split it into its own room. */}
+        {tool === 'move' && !selEdge && !selOpen && selWall && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
+            <button onClick={() => setMaterial(selWall.id)}
+              className="bg-white text-navy rounded-full px-4 py-3 text-sm font-bold shadow-lg active:scale-95 flex items-center gap-2 min-w-0">
+              <span className="truncate">{selWall.material ? selWall.material : 'Set material'}</span>
+            </button>
+            {scene.walls.length >= 2 && (
+              <button onClick={() => setSplitName({ wallId: selWall.id, name: 'Closet' })}
+                className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-5 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2 shrink-0">
+                <Scissors size={16} /> Make separate room
+              </button>
+            )}
+          </div>
+        )}
+        {tool === 'move' && !selEdge && selectedId && !selOpen && !selWall && (
           <button onClick={deleteSelected} className="absolute left-3 bottom-3 bg-red-600 text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><Trash2 size={16} /> Delete</button>
         )}
         {tool === 'wet' && activeWetId && (
@@ -1216,13 +1377,13 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it.' : 'Tap a WALL to set its exact length, or an OPENING to re-measure it. Drag a corner to reshape.')}
+        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, or an OPENING to edit it. Drag a corner to reshape.')}
         {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Set exact lengths after, in Move.' : 'Tap TYPE EXACT SIZE and the room draws itself. Or drag a rough box and correct each wall in Move.')}
         {tool === 'wet' && (activeWetId ? 'Keep painting the wet spot, then tap Done. Two fingers to pan.' : 'Paint over the wet spots. Lift and paint more; tap Done to finish.')}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
         {tool === 'arrow' && 'Drag from the water source toward where it traveled.'}
-        {tool === 'door' && `Drag a ${OPENING_LABEL[doorKind].toLowerCase()} onto a wall. You will be asked for its size, because it deducts real wall area.`}
+        {tool === 'door' && `Drop a ${OPENING_LABEL[doorKind].toLowerCase()} on a wall and set its size, or tap an existing opening to edit it.`}
         {tool === 'floodcut' && 'Tap a wall, then set height and length. Drag the band to slide it, the dots to resize.'}
         {tool === 'containment' && 'Tap where the barrier goes, then enter its size.'}
         {tool === 'origin' && 'Drop the X on the source of the loss.'}
@@ -1426,6 +1587,115 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           </div>
         </div>
       )}
+
+      {/* Name the room being split out of this sketch, then create it. */}
+      {splitName && (() => {
+        const w = scene.walls.find(x => x.id === splitName.wallId);
+        const bb = w ? roomBBoxFt({ ...scene, walls: [w] } as Scene) : null;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
+            <div className="absolute inset-0 bg-navy/40" onClick={() => { if (!splitting) setSplitName(null); }} />
+            <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+              <div className="font-display font-bold text-lg text-navy">Make this a separate room</div>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                This outline becomes its own room{bb && bb.widthFt > 0 ? ` (about ${formatFeetInches(bb.widthFt)} by ${formatFeetInches(bb.lengthFt)})` : ''}, with its own measurements and moisture map. Its readings, equipment, doors and flood cuts move with it. Everything else stays in {roomName || 'this room'}.
+              </p>
+              <input value={splitName.name} onChange={e => setSplitName(s => s && ({ ...s, name: e.target.value }))}
+                placeholder="Closet" autoFocus
+                className="w-full border border-gray-200 rounded-xl px-3.5 py-3 mt-3 text-[16px] focus:outline-none focus:border-sky" />
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setSplitName(null)} disabled={splitting}
+                  className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50 disabled:opacity-50">Cancel</button>
+                <button onClick={() => splitOutRoom(splitName.wallId, splitName.name)} disabled={splitting}
+                  className="btn-primary flex-1 py-3 justify-center disabled:opacity-50">{splitting ? 'Creating...' : 'Create room'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* The closet is now its own room. Confirm it and stay put; this map shows the rest. */}
+      {splitDone && (
+        <div className="fixed inset-0 z-[75] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12vh)' }}>
+          <div className="absolute inset-0 bg-navy/40" onClick={() => setSplitDone(null)} />
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+            <div className="font-display font-bold text-lg text-navy">{splitDone} is now its own room</div>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              It has its own measurements and moisture map, and it is in this structure's room list and floor-plan tray. This map now shows only {roomName || 'this room'}.
+            </p>
+            <button onClick={() => setSplitDone(null)} className="btn-primary w-full py-3 justify-center mt-4">Done</button>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT AN OPENING already on a wall: change its type, width, height, or remove it.
+          Opens when a door / window / opening / missing wall is tapped. */}
+      {editOpen && (() => {
+        const o = (scene.openings ?? []).find(x => x.id === editOpen);
+        if (!o) return null;
+        const isMW = o.kind === 'missing_wall';
+        const edgeMax = Math.max(0.5, edgeLenFt(scene, o.wallId, o.edge) || o.widthFt);
+        const maxH = ceilingFt ?? 12;
+        const setO = (patch: Partial<typeof o>) => {
+          if (!editSnapped.current) { snapshot(); editSnapped.current = true; }
+          setScene(sc => ({ ...sc, openings: (sc.openings ?? []).map(x => x.id === o.id ? { ...x, ...patch } : x) }));
+        };
+        const setWidth = (ft: number) => { if (!isNaN(ft)) setO({ widthFt: Math.max(0.25, Math.min(ft, edgeMax)) }); };
+        const setHeight = (ft: number) => { if (!isNaN(ft)) setO({ heightFt: Math.max(0.25, Math.min(ft, maxH)) }); };
+        let wF = Math.floor(o.widthFt); let wI = Math.round((o.widthFt - wF) * 12); if (wI === 12) { wF += 1; wI = 0; }
+        const hFt = o.heightFt ?? 0; let hF = Math.floor(hFt); let hI = Math.round((hFt - hF) * 12); if (hI === 12) { hF += 1; hI = 0; }
+        const del = () => { snapshot(); setScene(sc => ({ ...sc, openings: (sc.openings ?? []).filter(x => x.id !== o.id) })); setSelectedId(null); setEditOpen(null); };
+        return (
+          <div className="fixed inset-0 z-[70] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 7vh)' }}>
+            <div className="absolute inset-0 bg-navy/30" onClick={() => setEditOpen(null)} />
+            <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+              <div className="font-display font-bold text-lg text-navy">Edit opening</div>
+              <p className="text-xs text-gray-400 mt-0.5">{isMW ? 'A missing wall is full ceiling height by definition.' : 'Type, width, and height. The height deducts real wall area.'}</p>
+
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Type</label>
+              <div className="grid grid-cols-4 gap-1.5 mt-1">
+                {OPENING_KINDS.map(kd => (
+                  <button key={kd} onClick={() => setO(kd === 'missing_wall' ? { kind: kd, heightFt: undefined } : { kind: kd })}
+                    className={`py-1.5 rounded-xl text-[11px] font-bold leading-tight ${o.kind === kd ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>
+                    {OPENING_LABEL[kd]}
+                  </button>
+                ))}
+              </div>
+
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Width</label>
+              <div className="flex gap-2 mt-1 items-center">
+                <input value={String(wF)} onChange={e => setWidth((parseInt(e.target.value) || 0) + wI / 12)} inputMode="numeric"
+                  className="w-14 border border-gray-200 rounded-xl px-2 py-2.5 text-[16px] font-bold text-center focus:outline-none focus:border-sky" />
+                <span className="text-xs text-gray-400">ft</span>
+                <input value={String(wI)} onChange={e => setWidth(wF + (parseInt(e.target.value) || 0) / 12)} inputMode="numeric"
+                  className="w-14 border border-gray-200 rounded-xl px-2 py-2.5 text-[16px] font-bold text-center focus:outline-none focus:border-sky" />
+                <span className="text-xs text-gray-400">in</span>
+                <span className="ml-auto text-[11px] font-semibold text-gray-400">wall is {formatFeetInches(edgeMax)}</span>
+              </div>
+
+              {!isMW && (
+                <>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Height</label>
+                  <div className="flex gap-2 mt-1 items-center">
+                    <input value={String(hF)} onChange={e => setHeight((parseInt(e.target.value) || 0) + hI / 12)} inputMode="numeric"
+                      className="w-14 border border-gray-200 rounded-xl px-2 py-2.5 text-[16px] font-bold text-center focus:outline-none focus:border-sky" />
+                    <span className="text-xs text-gray-400">ft</span>
+                    <input value={String(hI)} onChange={e => setHeight(hF + (parseInt(e.target.value) || 0) / 12)} inputMode="numeric"
+                      className="w-14 border border-gray-200 rounded-xl px-2 py-2.5 text-[16px] font-bold text-center focus:outline-none focus:border-sky" />
+                    <span className="text-xs text-gray-400">in</span>
+                    {o.heightFt == null && <span className="ml-auto text-[11px] font-bold text-amber-600">not measured yet</span>}
+                  </div>
+                </>
+              )}
+
+              <div className="flex gap-2 mt-4">
+                <button onClick={del} className="flex-1 border border-red-200 rounded-xl py-3 font-semibold text-red-600 active:bg-red-50 flex items-center justify-center gap-1.5"><Trash2 size={16} /> Remove</button>
+                <button onClick={() => setEditOpen(null)} className="btn-primary flex-1 py-3 justify-center">Done</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {pendingWetId && (() => {
         const wa = scene.wetAreas.find(w => w.id === pendingWetId);
