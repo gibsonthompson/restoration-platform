@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
 import {
   FileText, FileSpreadsheet, Download, X, ChevronRight, Trash2, Ruler, Images,
-  Loader2, CheckCircle2, FileDown, ExternalLink
+  Loader2, CheckCircle2, FileDown, Share
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { SubHeader } from '../components/SubHeader';
@@ -179,7 +179,7 @@ export default function Documents() {
   const [toast, setToast] = useState<{ title: string; docId: string } | null>(null);
   const [freshId, setFreshId] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(true);
-  const [preview, setPreview] = useState<{ doc: Doc; url: string | null; openUrl: string | null; downloadUrl: string | null; loading: boolean; error: string | null } | null>(null);
+  const [preview, setPreview] = useState<{ doc: Doc; url: string | null; file: File | null; fileName: string; loading: boolean; error: string | null } | null>(null);
 
   async function load() {
     if (!claimId) return;
@@ -242,42 +242,74 @@ export default function Documents() {
     } catch (e: any) { alert('Could not delete: ' + (e?.message ?? 'unknown')); }
   }
 
-  // Open a details + preview sheet. The URL is built here once, so the download control in
-  // the sheet is a plain anchor: no window.open after an await, which is what the mobile
-  // popup blocker was killing.
+  // Open a document. The PDF is fetched ONCE, as a blob, and that single blob powers both
+  // the on-screen preview and the Save / share button.
+  //
+  // Why a blob and not a link: on a phone, a plain link to a PDF is unreliable. Opening it
+  // as a top-level navigation gets swallowed by the PWA service worker's offline fallback
+  // (it answers navigations with the app shell, which is what bounced you to the homepage),
+  // and sharing a mere URL to Messages sends the raw bytes as TEXT, which is the wall of
+  // random characters. A fetch() is NOT a navigation, so the service worker ignores it and
+  // the file streams cleanly; and handing the native share sheet a real File object shares
+  // an actual PDF attachment, so Save to Files, Mail and Messages all get a proper document.
   async function openDoc(d: Doc) {
     if (d.type === 'esx') { void downloadEsx(d); return; }
-    setPreview({ doc: d, url: null, openUrl: null, downloadUrl: null, loading: true, error: null });
-    if (!d.storage_path) { setPreview({ doc: d, url: null, openUrl: null, downloadUrl: null, loading: false, error: 'No file is stored for this document yet.' }); return; }
-    // Auth rides in ?t= because the PDF viewer and the open/download anchors cannot send an
-    // Authorization header. The backend document route validates the token and streams the
-    // file, so the Supabase host and its random object name are never exposed either way.
+    setPreview({ doc: d, url: null, file: null, fileName: '', loading: true, error: null });
+    if (!d.storage_path) { setPreview({ doc: d, url: null, file: null, fileName: '', loading: false, error: 'No file is stored for this document yet.' }); return; }
+
+    // Auth rides in ?t= because a fetch of a cross-tab resource cannot always carry an
+    // Authorization header. The backend route validates the token and streams the file, so
+    // the Supabase host and its random object name are never exposed.
     const { data: { session } } = await supabase.auth.getSession();
     const t = session?.access_token;
-    if (!t) { setPreview({ doc: d, url: null, openUrl: null, downloadUrl: null, loading: false, error: 'Please sign in again.' }); return; }
+    if (!t) { setPreview({ doc: d, url: null, file: null, fileName: '', loading: false, error: 'Please sign in again.' }); return; }
+
     const clean = docName(d).replace(/[^\w.-]+/g, '_').replace(/_+/g, '_');
-    const q = `${d.id}/${clean}.pdf?t=${encodeURIComponent(t)}`;
+    const fileName = `${clean}.pdf`;
+    const src = `${window.location.origin}/api/resto/document/${d.id}/${clean}.pdf?t=${encodeURIComponent(t)}`;
+    try {
+      const res = await fetch(src);
+      if (!res.ok) throw new Error(`the server returned ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+      setPreview({ doc: d, url, file, fileName, loading: false, error: null });
+    } catch (_e) {
+      setPreview({ doc: d, url: null, file: null, fileName, loading: false, error: 'Could not load this document. It may still be generating, or you may be offline. Try again in a moment.' });
+    }
+  }
 
-    // IN-APP PREVIEW: pdf.js fetches this with an XHR, not a navigation, so the PWA service
-    // worker leaves it alone and the same-origin URL streams the PDF fine.
-    const previewUrl = `${window.location.origin}/api/resto/document/${q}`;
-
-    // OPEN / DOWNLOAD: these are TOP-LEVEL navigations. The service worker's offline
-    // navigation fallback answers same-origin navigations with the app shell (index.html),
-    // which is exactly why the old same-origin link dumped you back on the homepage, on the
-    // phone AND the desktop. Point these at the backend's own origin (the same base the
-    // Generate calls use). A cross-origin navigation is one the app's service worker never
-    // sees, so the real PDF loads in a new tab and the share sheet (Save to Files on iPhone)
-    // is right there. Falls back to same-origin only if VITE_API_URL is somehow unset.
-    const fileBase = `${API || window.location.origin}/api/resto/document/${q}`;
-
-    setPreview({
-      doc: d,
-      url: previewUrl,
-      openUrl: fileBase,
-      downloadUrl: `${fileBase}&download=1`,
-      loading: false, error: null
+  // Blob object URLs must be released or they leak memory for the life of the tab.
+  function closePreview() {
+    setPreview(p => {
+      if (p?.url && p.url.startsWith('blob:')) URL.revokeObjectURL(p.url);
+      return null;
     });
+  }
+
+  // True only where the browser can actually put a FILE into the share sheet (iOS Safari,
+  // Android Chrome, and installed PWAs). On a desktop that cannot, we show a plain download.
+  const canShareFile = (f: File | null): boolean =>
+    !!f && typeof navigator !== 'undefined'
+    && typeof (navigator as any).canShare === 'function'
+    && (navigator as any).canShare({ files: [f] });
+
+  // Hand the native share sheet the real PDF. Called straight from the tap with the blob
+  // already in hand, so there is no await before share() to burn the user gesture. A user
+  // who cancels the sheet is not an error; a genuine failure falls back to a download.
+  async function sharePdf() {
+    const f = preview?.file;
+    if (!f) return;
+    try {
+      await (navigator as any).share({ files: [f], title: preview?.fileName || 'Report' });
+    } catch (err: any) {
+      if (err && err.name === 'AbortError') return;   // user dismissed the sheet
+      if (preview?.url) {
+        const a = document.createElement('a');
+        a.href = preview.url; a.download = preview.fileName;
+        document.body.appendChild(a); a.click(); a.remove();
+      }
+    }
   }
 
   function openFromToast() {
@@ -383,8 +415,8 @@ export default function Documents() {
         />
       )}
 
-      {preview && (
-        <div className="fixed inset-0 z-[70] bg-white flex flex-col">
+      {preview && createPortal(
+        <div className="fixed inset-0 z-[80] bg-white flex flex-col">
           <div className="safe-top px-4 pt-3 pb-2 border-b border-gray-100 flex items-center justify-between gap-2">
             <div className="min-w-0">
               <div className="font-bold text-navy text-sm truncate">{docName(preview.doc)}</div>
@@ -392,19 +424,20 @@ export default function Documents() {
                 {preview.doc.status.replace('_', ' ')} &middot; {new Date(preview.doc.created_at).toLocaleString()}
               </div>
             </div>
-            <button onClick={() => setPreview(null)}
+            <button onClick={closePreview}
                     className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0"><X size={18} /></button>
           </div>
 
           {preview.loading && (
             <div className="flex-1 flex flex-col items-center justify-center gap-2 text-gray-400 text-sm">
-              <Loader2 size={22} className="animate-spin" /> Loading preview...
+              <Loader2 size={22} className="animate-spin" /> Loading document...
             </div>
           )}
           {preview.error && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-2 px-8 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 px-8 text-center">
               <FileText size={32} className="text-gray-300" />
               <p className="text-sm text-gray-500">{preview.error}</p>
+              <button onClick={() => void openDoc(preview.doc)} className="btn-soft py-2 px-4 text-sm">Try again</button>
             </div>
           )}
           {preview.url && (
@@ -414,21 +447,30 @@ export default function Documents() {
           )}
 
           {preview.url && (
-            <div className="px-4 pt-2 pb-3 border-t border-gray-100 safe-bottom">
-              <a href={preview.openUrl || preview.url} target="_blank" rel="noopener noreferrer"
-                 className="btn-primary w-full py-3 justify-center text-sm">
-                <ExternalLink size={16} /> Open in browser
-              </a>
-              <a href={preview.downloadUrl || preview.openUrl || preview.url} target="_blank" rel="noopener noreferrer"
-                 className="btn-soft w-full py-3 justify-center text-sm mt-2">
-                <Download size={16} /> Download
-              </a>
-              <p className="text-[11px] text-gray-400 text-center mt-2 leading-snug">
-                Opens the PDF in a new tab. On iPhone, tap the share icon there, then <span className="font-semibold">Save to Files</span>. On a computer it opens in a tab you can save or print.
-              </p>
+            <div className="px-4 pt-3 pb-3 border-t border-gray-100 safe-bottom">
+              {canShareFile(preview.file) ? (
+                <>
+                  <button onClick={() => void sharePdf()} className="btn-primary w-full py-3.5 justify-center text-sm">
+                    <Share size={17} /> Save or share PDF
+                  </button>
+                  <p className="text-[11.5px] text-gray-500 text-center mt-2.5 leading-relaxed">
+                    Opens your phone's share sheet with the PDF attached. Tap <span className="font-semibold text-gray-700">Save to Files</span> to keep it, or send it to Mail or Messages and it goes as a real PDF, not text.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <a href={preview.url} download={preview.fileName} className="btn-primary w-full py-3.5 justify-center text-sm">
+                    <Download size={17} /> Download PDF
+                  </a>
+                  <p className="text-[11.5px] text-gray-500 text-center mt-2.5 leading-relaxed">
+                    Saves the PDF to your downloads.
+                  </p>
+                </>
+              )}
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
