@@ -23,6 +23,20 @@ interface MoldScan {
 // is the only place it is written. Three doors into one number is how the three of them
 // end up disagreeing.
 
+// PER-SURFACE SCOPE. Which surfaces of THIS room are part of the loss. The room is the
+// natural home for it: it is the one screen a tech opens for every room, and the affected
+// flag (whole-room in or out) is refined here to the surface level. Each toggle writes one
+// resto_rooms boolean, and every document reads them: the measurement sheet and the report
+// mark an off surface "not in scope" and drop it from the totals, and the Xactimate export
+// omits its line items. The geometry is never touched, so an off surface is still drawn and
+// measured, just not billed. Default is all four on (fully in scope).
+const SURFACES: { col: 'include_floor' | 'include_walls' | 'include_ceiling' | 'include_baseboard'; label: string }[] = [
+  { col: 'include_floor', label: 'Floor' },
+  { col: 'include_walls', label: 'Walls' },
+  { col: 'include_ceiling', label: 'Ceiling' },
+  { col: 'include_baseboard', label: 'Baseboard' }
+];
+
 // Verdict visual language for the mold screening result.
 const VERDICT: Record<string, { label: string; cls: string; dot: string }> = {
   mold_likely:   { label: 'Mold likely',   cls: 'bg-red-100 text-red-700',    dot: 'bg-red-500' },
@@ -31,6 +45,14 @@ const VERDICT: Record<string, { label: string; cls: string; dot: string }> = {
   inconclusive:  { label: 'Inconclusive',  cls: 'bg-gray-100 text-gray-600',  dot: 'bg-gray-400' }
 };
 const verdictMeta = (v?: string) => VERDICT[v ?? 'inconclusive'] ?? VERDICT.inconclusive;
+
+// Join a short list into prose without an em-dash: "floor", "floor and walls",
+// "floor, walls and ceiling".
+function joinList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
 
 // Room workspace: four collections. Photos support a manual AI mold scan.
 export default function RoomDetail() {
@@ -47,6 +69,7 @@ export default function RoomDetail() {
   const [caption, setCaption] = useState('');
   const [scanning, setScanning] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [savingScope, setSavingScope] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
 
@@ -90,6 +113,29 @@ export default function RoomDetail() {
     void loadNotes();
     void loadMedia();
   }, [roomId, structureId]);
+
+  // Flip one surface in or out of scope. Optimistic so the tap is instant, but the
+  // Supabase error is READ and surfaced, and the toggle reverts if the write failed:
+  // a checklist that lies about what it saved is worse than no checklist.
+  async function toggleSurface(col: typeof SURFACES[number]['col']) {
+    if (!room || savingScope) return;
+    const prev = room[col] !== false;
+    const next = !prev;
+    setRoom(r => (r ? { ...r, [col]: next } : r));
+    setSavingScope(true);
+    try {
+      const { error } = await supabase.from('resto_rooms').update({ [col]: next }).eq('id', room.id);
+      if (error) {
+        setRoom(r => (r ? { ...r, [col]: prev } : r));   // revert; nothing was saved
+        alert('Could not update the scope: ' + error.message);
+      }
+    } catch (e: any) {
+      setRoom(r => (r ? { ...r, [col]: prev } : r));
+      alert('Could not update the scope: ' + (e?.message ?? 'unknown error'));
+    } finally {
+      setSavingScope(false);
+    }
+  }
 
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const input = e.target;
@@ -174,9 +220,43 @@ export default function RoomDetail() {
 
   const viewerScan = viewer ? scans[viewer.id] : undefined;
 
+  // Surface scope only matters on an affected room. A context-only space (affected =
+  // false) has nothing in scope by definition, so the checklist would be four dead
+  // toggles; hide it and say why. The affected flag itself is set on the floor plan.
+  const affected = room.affected !== false;
+  const outOfScope = SURFACES.filter(s => room[s.col] === false).map(s => s.label.toLowerCase());
+  const scopeHint = outOfScope.length === 0
+    ? 'The whole room is part of the loss. Turn a surface off if it was not affected, for example an unaffected floor under wet walls.'
+    : `${joinList(outOfScope).charAt(0).toUpperCase() + joinList(outOfScope).slice(1)} ${outOfScope.length === 1 ? 'is' : 'are'} marked not in scope. Still shown on the documents for reference, but left out of the measurement totals and the estimate.`;
+
   return (
     <div>
       <SubHeader title={room.name} />
+
+      {/* Which surfaces of this room are part of the loss. Reflected on every document. */}
+      {affected && (
+        <div className="px-4 pt-3">
+          <div className="bg-white rounded-2xl p-3.5 shadow-soft">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Surfaces in scope</span>
+              {savingScope && <span className="text-[11px] text-sky-deep font-semibold">Saving...</span>}
+            </div>
+            <div className="grid grid-cols-4 gap-1.5 mt-2">
+              {SURFACES.map(s => {
+                const on = room[s.col] !== false;
+                return (
+                  <button key={s.col} onClick={() => toggleSurface(s.col)} disabled={savingScope}
+                    aria-pressed={on}
+                    className={`py-2 rounded-xl text-[12px] font-semibold transition disabled:opacity-60 ${on ? 'bg-sky-soft text-sky-deep ring-1 ring-sky/30' : 'bg-gray-100 text-gray-400'}`}>
+                    <span className={on ? '' : 'line-through'}>{s.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-2 leading-snug">{scopeHint}</p>
+          </div>
+        </div>
+      )}
 
       <div className="px-4 pt-3">
         <div className="flex gap-1 bg-white rounded-2xl p-1.5 shadow-soft">

@@ -109,6 +109,18 @@ export interface Room {
   // false = structural context only (a hallway on the floor plan: it carries doors
   // and shows the flow, but is not scoped, scored, or counted for photo coverage).
   affected: boolean;
+
+  // ---- Per-surface scope ----
+  // Which SURFACES of an affected room are part of the loss. Default true (in scope).
+  // Turning one off (say an unaffected tile floor under wet walls) keeps the surface
+  // MEASURED and SHOWN on the documents, marked "not in scope," but drops it from the
+  // measurement totals and from the Xactimate line items. The room geometry is never
+  // changed by these; scope is what is billed, not what the room is. Backed by
+  // resto_rooms.include_floor / include_walls / include_ceiling / include_baseboard.
+  include_floor: boolean;
+  include_walls: boolean;
+  include_ceiling: boolean;
+  include_baseboard: boolean;
 }
 
 export interface Note {
