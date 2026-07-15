@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyNote, Trash2 } from 'lucide-react';
+import { Camera, Plus, X, Microscope, TriangleAlert, Image as ImageIcon, StickyNote, Trash2, Pencil } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SubHeader } from '../components/SubHeader';
@@ -73,6 +73,9 @@ export default function RoomDetail() {
   const [savingScope, setSavingScope] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
 
@@ -167,6 +170,28 @@ export default function RoomDetail() {
       alert('Could not update the wall area setting: ' + (e?.message ?? 'unknown error'));
     } finally {
       setSavingScope(false);
+    }
+  }
+
+  // Rename the room. Optimistic, and reverts on a failed write. Every screen (this header,
+  // the report, the Xactimate export) reads resto_rooms.name live, and the floor plan stores
+  // room ids not names, so nothing else has to change when the name does.
+  async function saveName() {
+    if (!room) return;
+    const next = nameDraft.trim();
+    if (!next || next === room.name) { setRenaming(false); return; }
+    const prev = room.name;
+    setRoom(r => (r ? { ...r, name: next } : r));
+    setSavingName(true);
+    try {
+      const { error } = await supabase.from('resto_rooms').update({ name: next }).eq('id', room.id);
+      if (error) { setRoom(r => (r ? { ...r, name: prev } : r)); alert('Could not rename the room: ' + error.message); return; }
+      setRenaming(false);
+    } catch (e: any) {
+      setRoom(r => (r ? { ...r, name: prev } : r));
+      alert('Could not rename the room: ' + (e?.message ?? 'unknown error'));
+    } finally {
+      setSavingName(false);
     }
   }
 
@@ -308,6 +333,18 @@ export default function RoomDetail() {
   return (
     <div>
       <SubHeader title={room.name} />
+
+      {/* Room name, editable. Tap to rename. */}
+      <div className="px-4 pt-3">
+        <button onClick={() => { setNameDraft(room.name); setRenaming(true); }}
+          className="w-full flex items-center justify-between gap-3 bg-white rounded-2xl p-3.5 shadow-soft active:bg-gray-50 text-left">
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Room name</div>
+            <div className="text-[15px] font-bold text-navy truncate">{room.name}</div>
+          </div>
+          <span className="shrink-0 w-9 h-9 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center"><Pencil size={16} /></span>
+        </button>
+      </div>
 
       {/* Which surfaces of this room are part of the loss. Reflected on every document. */}
       {affected && (
@@ -507,6 +544,26 @@ export default function RoomDetail() {
                   <p className="text-[11px] text-gray-400 text-center">AI visual screening. Not a lab diagnosis.</p>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename the room. */}
+      {renaming && (
+        <div className="fixed inset-0 z-[75] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12vh)' }}>
+          <div className="absolute inset-0 bg-navy/40" onClick={() => { if (!savingName) setRenaming(false); }} />
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+            <div className="font-display font-bold text-lg text-navy">Rename room</div>
+            <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} autoFocus
+              placeholder="Room name"
+              onKeyDown={e => { if (e.key === 'Enter') saveName(); }}
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-3 mt-3 text-[16px] focus:outline-none focus:border-sky" />
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setRenaming(false)} disabled={savingName}
+                className="flex-1 border border-gray-200 rounded-xl py-3 font-semibold text-gray-600 active:bg-gray-50 disabled:opacity-50">Cancel</button>
+              <button onClick={saveName} disabled={savingName || !nameDraft.trim()}
+                className="btn-primary flex-1 py-3 justify-center disabled:opacity-50">{savingName ? 'Saving...' : 'Save'}</button>
             </div>
           </div>
         </div>
