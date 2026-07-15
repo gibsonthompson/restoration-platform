@@ -143,36 +143,6 @@ export default function RoomDetail() {
     }
   }
 
-  // WALL AREA: deduct the doors and windows, or bill the full wall.
-  //
-  // deduct_openings = true (default): the report bills the NET wall, gross minus every
-  //   opening, i.e. the paintable / drywall surface you can actually see.
-  // deduct_openings = false: the report bills the GROSS wall, perimeter x ceiling height,
-  //   with doors and windows included and not deducted. The openings are still measured
-  //   and listed on the report, they are just not subtracted.
-  //
-  // Writes one resto_rooms boolean, read by resto-report.js. Same optimistic pattern as the
-  // surface toggles: revert on a failed write rather than lie about what saved.
-  async function setDeductOpenings(next: boolean) {
-    if (!room || savingScope) return;
-    const prev = (room as any).deduct_openings !== false;
-    if (prev === next) return;
-    setRoom(r => (r ? ({ ...r, deduct_openings: next } as any) : r));
-    setSavingScope(true);
-    try {
-      const { error } = await supabase.from('resto_rooms').update({ deduct_openings: next }).eq('id', room.id);
-      if (error) {
-        setRoom(r => (r ? ({ ...r, deduct_openings: prev } as any) : r));
-        alert('Could not update the wall area setting: ' + error.message);
-      }
-    } catch (e: any) {
-      setRoom(r => (r ? ({ ...r, deduct_openings: prev } as any) : r));
-      alert('Could not update the wall area setting: ' + (e?.message ?? 'unknown error'));
-    } finally {
-      setSavingScope(false);
-    }
-  }
-
   // Rename the room. Optimistic, and reverts on a failed write. Every screen (this header,
   // the report, the Xactimate export) reads resto_rooms.name live, and the floor plan stores
   // room ids not names, so nothing else has to change when the name does.
@@ -323,8 +293,6 @@ export default function RoomDetail() {
   // false) has nothing in scope by definition, so the checklist would be four dead
   // toggles; hide it and say why. The affected flag itself is set on the floor plan.
   const affected = room.affected !== false;
-  const wallsInScope = room.include_walls !== false;
-  const deductOpenings = (room as any).deduct_openings !== false;
   const outOfScope = SURFACES.filter(s => room[s.col] === false).map(s => s.label.toLowerCase());
   const scopeHint = outOfScope.length === 0
     ? 'The whole room is part of the loss. Turn a surface off if it was not affected, for example an unaffected floor under wet walls.'
@@ -367,32 +335,6 @@ export default function RoomDetail() {
               })}
             </div>
             <p className="text-[11px] text-gray-400 mt-2 leading-snug">{scopeHint}</p>
-
-            {/* WALL AREA on the report: deduct the doors and windows (net, the default) or
-                bill the full wall with the openings included. Only shown when walls are in
-                scope, since it is moot otherwise. */}
-            {wallsInScope && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Wall area on the report</span>
-                <div className="flex bg-gray-100 rounded-full p-0.5 mt-2">
-                  {([[true, 'Deduct openings'], [false, 'Include openings']] as [boolean, string][]).map(([val, label]) => {
-                    const on = deductOpenings === val;
-                    return (
-                      <button key={label} onClick={() => setDeductOpenings(val)} disabled={savingScope}
-                        aria-pressed={on}
-                        className={`flex-1 py-1.5 rounded-full text-xs font-bold transition disabled:opacity-60 ${on ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-gray-400 mt-2 leading-snug">
-                  {deductOpenings
-                    ? 'Doors and windows are taken out of the wall area, so the report bills only the wall surface itself.'
-                    : 'The full wall square footage is billed, doors and windows included and not deducted. They are still measured and listed on the report.'}
-                </p>
-              </div>
-            )}
           </div>
         </div>
       )}
