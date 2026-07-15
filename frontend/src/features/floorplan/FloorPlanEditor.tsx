@@ -13,7 +13,7 @@ import { viewTransform, screenToScene, panDelta, normRot, type View as VView } f
 import {
   normalizeScene, uid, nearestWallEdge, hitOpening, edgeLenFt, ptsStr,
   OPENING_DEFAULT_FT, OPENING_DEFAULT_HEIGHT_FT,
-  OPENING_DESC, OPENING_LABEL, UNITS_PER_FT,
+  OPENING_DESC, OPENING_LABEL, UNITS_PER_FT, SCENE_SIZE,
   MATERIALS_BY_SURFACE, EQUIP_META,
   type EquipType, type OpeningKind, type Pt, type Scene
 } from '../sketch/sketchModel';
@@ -45,6 +45,71 @@ interface OpeningDraft {
 }
 type OpeningRef = { roomId: string; id: string };
 interface OpeningSelState { targets: OpeningRef[] }
+
+// ---------------------------------------------------------------------------
+// RESIZING A ROOM FROM THE PLAN
+// ---------------------------------------------------------------------------
+// A room's size lives in its OWN sketch, in its own coordinates. The floor plan is a
+// second lens on that same data, so resizing a room here has to rewrite the room's
+// canvas_json, not some layout-only copy of it. Anything else and the plan and the
+// sketch drift apart, and the estimate is built off whichever one you opened last.
+//
+// Rectangles only, and that is deliberate. Scaling an L-shaped hallway to a width and a
+// length silently changes wall lengths a tech never touched. If the outline is not a
+// rectangle we say so and send them to the sketch, where every wall can be typed.
+const RECT_TOL = 2;   // scene units. 2 units is 0.05 ft, well under an inch.
+
+function outlineBBox(scene: Scene): { x0: number; y0: number; w: number; h: number } | null {
+  const poly = roomOutline(scene);
+  if (!poly || !poly.points || poly.points.length < 3) return null;
+  const xs = poly.points.map(p => p[0]), ys = poly.points.map(p => p[1]);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  return { x0, y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
+}
+
+function isAxisRect(pts: Pt[]): boolean {
+  if (!pts || pts.length !== 4) return false;
+  for (let i = 0; i < 4; i++) {
+    const a = pts[i], b = pts[(i + 1) % 4];
+    const dx = Math.abs(b[0] - a[0]), dy = Math.abs(b[1] - a[1]);
+    if (dx > RECT_TOL && dy > RECT_TOL) return false;    // neither horizontal nor vertical
+    if (dx <= RECT_TOL && dy <= RECT_TOL) return false;  // degenerate edge
+  }
+  return true;
+}
+
+// Scale the room's GEOMETRY about its top-left corner. Everything positioned inside the
+// room moves with it, so an air mover that was in the middle stays in the middle.
+//
+// What does NOT scale: opening widths, flood cut lengths and containment sizes. Those are
+// REAL-WORLD MEASUREMENTS in feet. A 3 ft door is 3 ft whether the room is 12 ft or 14 ft
+// across, and quietly stretching it to 3 ft 6 in because someone corrected the room size
+// would put a fabricated number on a drywall line.
+function scaleScene(scene: Scene, x0: number, y0: number, sx: number, sy: number): Scene {
+  const P = (p: Pt): Pt => [x0 + (p[0] - x0) * sx, y0 + (p[1] - y0) * sy];
+  return {
+    ...scene,
+    walls: (scene.walls ?? []).map(w => ({ ...w, points: w.points.map(P) })),
+    wetAreas: (scene.wetAreas ?? []).map(w => ({
+      ...w,
+      points: (w.points ?? []).map(P),
+      strokes: w.strokes ? w.strokes.map(st => st.map(P)) : undefined,
+      brush: w.brush != null ? w.brush * ((sx + sy) / 2) : undefined
+    })),
+    equipment: (scene.equipment ?? []).map(e => { const q = P([e.x, e.y]); return { ...e, x: q[0], y: q[1] }; }),
+    moisturePoints: (scene.moisturePoints ?? []).map(m => { const q = P([m.x, m.y]); return { ...m, x: q[0], y: q[1] }; }),
+    arrows: (scene.arrows ?? []).map(a => ({ ...a, from: P(a.from), to: P(a.to) })),
+    containments: (scene.containments ?? []).map(c => {
+      const out = { ...c };
+      if (c.x != null && c.y != null) { const q = P([c.x, c.y]); out.x = q[0]; out.y = q[1]; }
+      if (c.from && c.to) { out.from = P(c.from); out.to = P(c.to); }
+      return out;
+    }),
+    originOfLoss: scene.originOfLoss ? P(scene.originOfLoss) : undefined
+  };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const OFF = 50;          // offset cursor: the target sits up-left of the finger, never under the thumb
 const SNAP_PX = 18;      // wall-snap reach, in SCREEN pixels (scaled to scene units by zoom)
@@ -161,7 +226,10 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   const [wetSheet, setWetSheet] = useState<{ roomId: string; material: string; disposition: 'dry' | 'remove' } | null>(null);
   const [openSheet, setOpenSheet] = useState<OpeningDraft | null>(null);
   const [selOpening, setSelOpening] = useState<OpeningSelState | null>(null);
-  const [sizeSheet, setSizeSheet] = useState(false);
+  const [spaceSizeSheet, setSpaceSizeSheet] = useState(false);
+  const [roomSizeSheet, setRoomSizeSheet] = useState<string | null>(null);   // roomId being resized
+  // Rooms whose width_ft / length_ft must be written back to resto_rooms on save.
+  const [dimsDirty, setDimsDirty] = useState<Set<string>>(new Set());
   const [structCeiling, setStructCeiling] = useState<number | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -459,9 +527,46 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     const w = widthFt * UNITS_PER_FT, h = lengthFt * UNITS_PER_FT;
     const c = size.w ? pxToScene([size.w / 2, size.h / 2]) : ([0, 0] as Pt);
     const x = snap(c[0] - w / 2), y = snap(c[1] - h / 2);
-    setSizeSheet(false);
+    setSpaceSizeSheet(false);
     setDraft(null);
     setNameSheet({ points: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], name: '' });
+  }
+
+  // RESIZE AN EXISTING ROOM, and have it land in the room's own sketch.
+  //
+  // With no sketch yet, the typed size CREATES one: tap a placeholder room on the plan,
+  // type 12 x 10, and it becomes a real drawn room with a real outline. That is the fastest
+  // path from an empty claim to a measurable one.
+  function applyRoomSize(roomId: string, widthFt: number, lengthFt: number) {
+    const scene = scenes[roomId] ?? normalizeScene(null);
+    const W = widthFt * UNITS_PER_FT, H = lengthFt * UNITS_PER_FT;
+    const outline = roomOutline(scene);
+
+    let next: Scene;
+    if (!outline || !outline.points || outline.points.length < 3) {
+      const x0 = (SCENE_SIZE - W) / 2, y0 = (SCENE_SIZE - H) / 2;
+      next = { ...scene, walls: [...(scene.walls ?? []), { id: uid(), points: [[x0, y0], [x0 + W, y0], [x0 + W, y0 + H], [x0, y0 + H]] as Pt[] }] };
+    } else if (isAxisRect(outline.points)) {
+      const bb = outlineBBox(scene);
+      if (!bb || bb.w < 1 || bb.h < 1) return;
+      next = scaleScene(scene, bb.x0, bb.y0, W / bb.w, H / bb.h);
+    } else {
+      alert('This room is not a rectangle, so it cannot be set to a single width and length without changing the shape a tech drew. Open the room sketch and type each wall length there.');
+      setRoomSizeSheet(null);
+      return;
+    }
+
+    setScenes(sc => ({ ...sc, [roomId]: next }));
+    markDirty(roomId);
+    setDimsDirty(d => new Set(d).add(roomId));
+
+    const room = rooms.find(r => r.id === roomId);
+    if (room) {
+      const nr: RoomRow = { ...room, width_ft: round2(widthFt), length_ft: round2(lengthFt) };
+      setRooms(rs => rs.map(r => (r.id === roomId ? nr : r)));
+      setFootprints(f => ({ ...f, [roomId]: footprintFromRoom(nr, next) }));
+    }
+    setRoomSizeSheet(null);
   }
 
   function addPolyCorner() {
@@ -636,27 +741,100 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
   function zoomBy(f: number) { const v = viewRef.current, cx = size.w / 2, cy = size.h / 2; const k = clampK(v.k * f); const ff = k / v.k; setView({ ...v, k, tx: cx - (cx - v.tx) * ff, ty: cy - (cy - v.ty) * ff }); }
   function rotateSel() { if (!selected) return; setBlocks(bs => bs.map(b => b.roomId === selected ? { ...b, rotation: (b.rotation + 90) % 360 } : b)); }
 
+  // ---- SAVING ---------------------------------------------------------------
+  //
+  // THE FLOOR PLAN WAS NOT SAVING, AND THIS IS WHY.
+  //
+  // Every supabase call in here threw its result away. The layout upsert uses
+  // onConflict: 'structure_id', which requires a UNIQUE INDEX on that column. There was
+  // none, so Postgres refused the statement outright with
+  //
+  //   42P10: there is no unique or exclusion constraint matching the ON CONFLICT
+  //          specification
+  //
+  // and the editor called onClose(true) regardless. It closed. It said it saved. Every
+  // drag, every rotation and every door placed on the plan went in the bin.
+  //
+  // Two changes, and they are both non-negotiable:
+  //   1. EVERY result is checked, and a failure THROWS with the real Postgres message.
+  //   2. A failed save does NOT close the editor. Losing an hour of work in a wet house
+  //      because a dialog closed is not an acceptable outcome of a database error.
+  //
+  // And one more: the layout is READ BACK after writing. An error-free write that wrote
+  // nothing (a row-level security policy that filters rather than rejects, say) is the
+  // one failure a returned error cannot catch, so we go and look.
+  const roomName = (id: string) => (rooms.find(r => r.id === id)?.name) || 'a room';
+
   async function persist() {
+    // 1. each room's sketch, in the room's OWN coordinates
     for (const roomId of dirty) {
       const scene = scenes[roomId]; if (!scene) continue;
       const id = sketchIds[roomId];
-      if (id) await supabase.from('resto_sketches').update({ canvas_json: scene as any }).eq('id', id);
-      else {
-        const { data } = await supabase.from('resto_sketches')
-          .insert({ org_id: orgId, room_id: roomId, type: 'moisture_map', canvas_json: scene as any }).select('id').single();
-        if (data) setSketchIds(s => ({ ...s, [roomId]: (data as any).id }));
+      if (id) {
+        const { error } = await supabase.from('resto_sketches')
+          .update({ canvas_json: scene as any }).eq('id', id);
+        if (error) throw new Error(`Could not save the sketch for ${roomName(roomId)}: ${error.message}`);
+      } else {
+        const { data, error } = await supabase.from('resto_sketches')
+          .insert({ org_id: orgId, room_id: roomId, type: 'moisture_map', canvas_json: scene as any })
+          .select('id').single();
+        if (error || !data) throw new Error(`Could not create the sketch for ${roomName(roomId)}: ${error?.message ?? 'no row came back'}`);
+        setSketchIds(s => ({ ...s, [roomId]: (data as any).id }));
       }
     }
-    setDirty(new Set());
-    await supabase.from('resto_structure_floorplans').upsert(
+
+    // 2. any room resized on the plan writes its dimensions back to resto_rooms, so every
+    //    screen that reads room.width_ft / length_ft agrees with the sketch
+    for (const roomId of dimsDirty) {
+      const r = rooms.find(x => x.id === roomId); if (!r) continue;
+      const { error } = await supabase.from('resto_rooms')
+        .update({ width_ft: r.width_ft, length_ft: r.length_ft }).eq('id', roomId);
+      if (error) throw new Error(`Could not save the size of ${roomName(roomId)}: ${error.message}`);
+    }
+
+    // 3. the layout: WHERE each room sits. Never what is inside it.
+    const { error: fpErr } = await supabase.from('resto_structure_floorplans').upsert(
       { structure_id: structureId, org_id: orgId, layout_json: { blocks }, updated_at: new Date().toISOString() },
       { onConflict: 'structure_id' });
+    if (fpErr) {
+      const hint = (fpErr as any).code === '42P10'
+        ? ' The resto_structure_floorplans table needs a UNIQUE index on structure_id. Run migration 20260714_floorplan_unique.sql.'
+        : '';
+      throw new Error('Could not save the floor plan layout: ' + fpErr.message + hint);
+    }
+
+    // 4. TRUST NOTHING. Read it back.
+    const { data: check, error: readErr } = await supabase.from('resto_structure_floorplans')
+      .select('layout_json').eq('structure_id', structureId).maybeSingle();
+    if (readErr) throw new Error('Saved, but could not verify the floor plan: ' + readErr.message);
+    const saved = ((check as any)?.layout_json?.blocks ?? []) as Block[];
+    if (saved.length !== blocks.length) {
+      throw new Error(`The floor plan did not persist: ${blocks.length} room${blocks.length === 1 ? '' : 's'} on screen, ${saved.length} stored. Nothing was lost on your screen, so try again.`);
+    }
+
+    setDirty(new Set());
+    setDimsDirty(new Set());
   }
-  async function save() { setSaving(true); try { await persist(); onClose(true); } finally { setSaving(false); } }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await persist();
+      onClose(true);
+    } catch (e: any) {
+      alert(e?.message ?? 'Could not save the floor plan.');   // stay open; the work is still here
+    } finally { setSaving(false); }
+  }
+
   async function openRoom() {
     if (!selected) return;
     setSaving(true);
-    try { await persist(); } finally { setSaving(false); }
+    try {
+      await persist();
+    } catch (e: any) {
+      alert((e?.message ?? 'Could not save the floor plan.') + '\n\nStaying here so nothing is lost.');
+      return;   // do NOT navigate away from unsaved work
+    } finally { setSaving(false); }
     nav(`/claims/${claimId}/structures/${structureId}/rooms/${selected}`);
   }
 
@@ -669,6 +847,17 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
     for (let y = Math.floor(vMinY / step) * step; y <= vMaxY; y += step) gy.push(y);
   }
   const selFp = selected ? footprints[selected] : null;
+  // Read the size back out of the room's SKETCH, not out of resto_rooms. The sketch is the
+  // source of truth; the columns are a cache of it.
+  const selSize = (() => {
+    if (!selected) return null;
+    const sc = scenes[selected];
+    const outline = sc ? roomOutline(sc) : null;
+    if (!outline || !outline.points || outline.points.length < 3) return { drawn: false, rect: false, w: 0, l: 0 };
+    const bb = outlineBBox(sc);
+    if (!bb) return { drawn: false, rect: false, w: 0, l: 0 };
+    return { drawn: true, rect: isAxisRect(outline.points), w: bb.w / UNITS_PER_FT, l: bb.h / UNITS_PER_FT };
+  })();
   const selRoom = selected ? rooms.find(r => r.id === selected) : null;
   const selAffected = selRoom ? selRoom.affected !== false : true;
   const isPoly = tool === 'space' && spaceMode === 'poly';
@@ -894,7 +1083,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
 
         {tool === 'space' && spaceMode === 'rect' && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
-            <button onClick={() => setSizeSheet(true)}
+            <button onClick={() => setSpaceSizeSheet(true)}
               className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-6 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2">
               <Ruler size={16} /> Type exact size
             </button>
@@ -927,7 +1116,16 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         )}
 
         {tool === 'select' && selFp && !selOpen && (
-          <div className="absolute left-3 bottom-3 flex gap-2 flex-wrap max-w-[70%]">
+          <div className="absolute left-3 bottom-3 flex gap-2 flex-wrap max-w-[78%]">
+            {/* Tap the size to change it. It rewrites the room's OWN sketch, so the plan and
+                the room editor can never disagree about how big the room is. */}
+            <button onClick={() => setRoomSizeSheet(selected)}
+                    className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-lg flex items-center gap-1.5 active:scale-95">
+              <Ruler size={16} />
+              {selSize && selSize.drawn
+                ? `${formatFeetInches(selSize.w)} \u00d7 ${formatFeetInches(selSize.l)}`
+                : 'Set size'}
+            </button>
             <button onClick={rotateSel} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95"><RotateCw size={16} /> Rotate</button>
             <button onClick={toggleAffected} className={`rounded-full px-4 py-2.5 text-sm font-bold shadow-soft flex items-center gap-1.5 active:scale-95 ${selAffected ? 'bg-white text-gray-600' : 'bg-sky text-white'}`}>
               {selAffected ? <><Trash2 size={16} /> Not affected</> : <><Check size={16} /> Mark affected</>}
@@ -989,7 +1187,7 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Drag a room near another and it snaps flush · Rotate in 90 degree steps' : 'Snapping is off · Drag to position') : 'Tap a room to select it, or an OPENING to re-measure it. Two fingers to pan and zoom.')}
+        {tool === 'select' && (selOpen ? 'Tap the button to re-measure this opening, or the bin to remove it. It updates on both sides of the wall.' : selected ? (magnet ? 'Drag a room near another and it snaps flush · Rotate in 90 degree steps' : 'Snapping is off · Drag to position') : 'Tap a room to select it, then tap its size to change it. Tap an OPENING to re-measure it.')}
         {tool === 'space' && (spaceMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Draw an L-shaped hall if that is the shape.' : 'Tap TYPE EXACT SIZE and the space draws itself. Or drag a box from the anchor corner.')}
         {isOpening && `Drag the ${OPENING_LABEL[doorKind].toLowerCase()} onto a wall, then measure it. It mirrors onto a shared wall.`}
         {isPlace && 'Drag onto the map. The preview shows exactly where it lands, release to drop.'}
@@ -1051,14 +1249,33 @@ export function FloorPlanEditor({ structureId, structureName, claimId, orgId, on
         );
       })()}
 
-      {sizeSheet && (
+      {spaceSizeSheet && (
         <RoomSizeSheet
           title="Space size"
           subtitle="Type the two measurements and the space draws itself. You name it next."
-          onCancel={() => setSizeSheet(false)}
+          onCancel={() => setSpaceSizeSheet(false)}
           onCreate={createRectExact}
         />
       )}
+
+      {roomSizeSheet && (() => {
+        const sc = scenes[roomSizeSheet];
+        const bb = sc ? outlineBBox(sc) : null;
+        const name = roomName(roomSizeSheet);
+        const drawn = !!bb;
+        return (
+          <RoomSizeSheet
+            title={name}
+            subtitle={drawn
+              ? 'Changing the size rewrites this room\u2019s sketch, so the plan and the room editor stay in step. Doors, windows and equipment inside it move with the walls.'
+              : 'This room has no sketch yet. Type its size and one is drawn for it.'}
+            initialWidthFt={bb ? bb.w / UNITS_PER_FT : null}
+            initialLengthFt={bb ? bb.h / UNITS_PER_FT : null}
+            onCancel={() => setRoomSizeSheet(null)}
+            onCreate={(w, l) => applyRoomSize(roomSizeSheet, w, l)}
+          />
+        );
+      })()}
 
       {nameSheet && (
         <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
