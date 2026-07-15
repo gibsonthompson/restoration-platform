@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
 import {
   FileText, FileSpreadsheet, Download, X, ChevronRight, Trash2, Ruler, Images,
-  Loader2, CheckCircle2, FileDown
+  Loader2, CheckCircle2, FileDown, ExternalLink
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { SubHeader } from '../components/SubHeader';
@@ -78,6 +79,98 @@ const GENERATORS: {
   }
 ];
 
+// ---------------------------------------------------------------------------
+// SUCCESS TOAST
+// ---------------------------------------------------------------------------
+// A finished document is announced with a floating card, not a full-width bar pinned
+// to the very bottom. The old bar sat at bottom-4 + safe-bottom, which is about
+// env(safe-area) + 24px up, while the bottom nav's top edge is about env(safe-area) + 55px
+// up. The bar therefore landed ~31px behind the nav and its Open / dismiss controls were
+// unreachable.
+//
+// Two things fix it for every device:
+//   1. It is PORTALLED to <body>, so no ancestor's overflow:hidden or transform (the app
+//      shell locks scrolling with overflow:hidden) can trap or clip a position:fixed child.
+//   2. It is anchored at calc(env(safe-area-inset-bottom) + 4.75rem), which clears the nav
+//      (about 55px of content above the home indicator) with a comfortable gap on a notched
+//      phone, a flat phone, and desktop alike.
+//
+// It slides up on arrival, auto-dismisses after a few seconds (paused while a finger or the
+// cursor is on it), can be swiped down to dismiss on a phone, and is centered with a max
+// width so it reads as a card rather than a banner on a wide screen.
+function DocToast({ title, onOpen, onClose }: { title: string; onOpen: () => void; onClose: () => void }) {
+  const [shown, setShown] = useState(false);   // drives the enter / exit transition
+  const [drag, setDrag] = useState(0);          // live swipe-down offset in px
+  const startY = useRef<number | null>(null);
+  const moved = useRef(false);
+  const timer = useRef<number | null>(null);
+
+  const clearTimer = () => { if (timer.current) { window.clearTimeout(timer.current); timer.current = null; } };
+  const dismiss = () => {
+    clearTimer();
+    setShown(false);
+    window.setTimeout(onClose, 240);            // let the slide-out play before unmount
+  };
+  const arm = () => { clearTimer(); timer.current = window.setTimeout(dismiss, 6000); };
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(true));   // enter on next frame
+    arm();
+    return () => { cancelAnimationFrame(raf); clearTimer(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onTouchStart = (e: React.TouchEvent) => { startY.current = e.touches[0].clientY; moved.current = false; clearTimer(); };
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (startY.current == null) return;
+    const dy = e.touches[0].clientY - startY.current;
+    if (Math.abs(dy) > 6) moved.current = true;
+    setDrag(Math.max(0, dy));                    // only downward drag counts
+  };
+  const onTouchEnd = () => {
+    if (drag > 60) { dismiss(); } else { setDrag(0); arm(); }
+    startY.current = null;
+  };
+
+  const cardTap = () => { if (moved.current) { moved.current = false; return; } onOpen(); };
+
+  const dragging = startY.current != null;
+
+  return createPortal(
+    <div className="fixed inset-x-0 z-[60] px-3 pointer-events-none"
+         style={{ bottom: 'calc(env(safe-area-inset-bottom) + 4.75rem)' }}>
+      <div
+        role="status"
+        onClick={cardTap}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        onMouseEnter={clearTimer} onMouseLeave={arm}
+        className="pointer-events-auto mx-auto max-w-md bg-white rounded-2xl shadow-xl ring-1 ring-navy/5
+                   pl-3 pr-2.5 py-2.5 flex items-center gap-3 cursor-pointer select-none"
+        style={{
+          transform: shown ? `translateY(${drag}px)` : 'translateY(150%)',
+          opacity: shown ? Math.max(0, 1 - drag / 150) : 0,
+          transition: dragging ? 'none' : 'transform .28s cubic-bezier(.22,1,.36,1), opacity .22s ease'
+        }}
+      >
+        <div className="w-10 h-10 rounded-xl bg-green-50 text-green-600 flex items-center justify-center shrink-0">
+          <CheckCircle2 size={20} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-bold text-navy leading-tight truncate">{title} is ready</div>
+          <div className="text-[12px] text-gray-400 leading-snug">Saved to this claim. Tap to open.</div>
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); onOpen(); }}
+                className="btn-primary py-2 px-4 text-[13px] shrink-0">Open</button>
+        <button onClick={(e) => { e.stopPropagation(); dismiss(); }} aria-label="Dismiss"
+                className="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 flex items-center justify-center shrink-0">
+          <X size={17} />
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function Documents() {
   const { claimId } = useParams();
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -86,7 +179,7 @@ export default function Documents() {
   const [toast, setToast] = useState<{ title: string; docId: string } | null>(null);
   const [freshId, setFreshId] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(true);
-  const [preview, setPreview] = useState<{ doc: Doc; url: string | null; downloadUrl: string | null; loading: boolean; error: string | null } | null>(null);
+  const [preview, setPreview] = useState<{ doc: Doc; url: string | null; openUrl: string | null; downloadUrl: string | null; loading: boolean; error: string | null } | null>(null);
 
   async function load() {
     if (!claimId) return;
@@ -154,17 +247,37 @@ export default function Documents() {
   // popup blocker was killing.
   async function openDoc(d: Doc) {
     if (d.type === 'esx') { void downloadEsx(d); return; }
-    setPreview({ doc: d, url: null, downloadUrl: null, loading: true, error: null });
-    if (!d.storage_path) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: 'No file is stored for this document yet.' }); return; }
-    // Served through our own domain (Vercel /api proxy to the backend) so the Supabase host
-    // and its random object name are never exposed. Auth rides in ?t= because the PDF viewer
-    // and download anchors cannot send an Authorization header.
+    setPreview({ doc: d, url: null, openUrl: null, downloadUrl: null, loading: true, error: null });
+    if (!d.storage_path) { setPreview({ doc: d, url: null, openUrl: null, downloadUrl: null, loading: false, error: 'No file is stored for this document yet.' }); return; }
+    // Auth rides in ?t= because the PDF viewer and the open/download anchors cannot send an
+    // Authorization header. The backend document route validates the token and streams the
+    // file, so the Supabase host and its random object name are never exposed either way.
     const { data: { session } } = await supabase.auth.getSession();
     const t = session?.access_token;
-    if (!t) { setPreview({ doc: d, url: null, downloadUrl: null, loading: false, error: 'Please sign in again.' }); return; }
+    if (!t) { setPreview({ doc: d, url: null, openUrl: null, downloadUrl: null, loading: false, error: 'Please sign in again.' }); return; }
     const clean = docName(d).replace(/[^\w.-]+/g, '_').replace(/_+/g, '_');
-    const base = `${window.location.origin}/api/resto/document/${d.id}/${clean}.pdf?t=${encodeURIComponent(t)}`;
-    setPreview({ doc: d, url: base, downloadUrl: `${base}&download=1`, loading: false, error: null });
+    const q = `${d.id}/${clean}.pdf?t=${encodeURIComponent(t)}`;
+
+    // IN-APP PREVIEW: pdf.js fetches this with an XHR, not a navigation, so the PWA service
+    // worker leaves it alone and the same-origin URL streams the PDF fine.
+    const previewUrl = `${window.location.origin}/api/resto/document/${q}`;
+
+    // OPEN / DOWNLOAD: these are TOP-LEVEL navigations. The service worker's offline
+    // navigation fallback answers same-origin navigations with the app shell (index.html),
+    // which is exactly why the old same-origin link dumped you back on the homepage, on the
+    // phone AND the desktop. Point these at the backend's own origin (the same base the
+    // Generate calls use). A cross-origin navigation is one the app's service worker never
+    // sees, so the real PDF loads in a new tab and the share sheet (Save to Files on iPhone)
+    // is right there. Falls back to same-origin only if VITE_API_URL is somehow unset.
+    const fileBase = `${API || window.location.origin}/api/resto/document/${q}`;
+
+    setPreview({
+      doc: d,
+      url: previewUrl,
+      openUrl: fileBase,
+      downloadUrl: `${fileBase}&download=1`,
+      loading: false, error: null
+    });
   }
 
   function openFromToast() {
@@ -260,21 +373,14 @@ export default function Documents() {
         ))}
       </div>
 
-      {/* Success is announced and actionable. The document is one tap away, not buried. */}
+      {/* Success is announced and actionable, above the nav, on a card one tap can open. */}
       {toast && (
-        <div className="fixed left-3 right-3 bottom-4 z-[60] safe-bottom">
-          <div className="bg-navy text-white rounded-2xl shadow-xl px-4 py-3 flex items-center gap-3">
-            <CheckCircle2 size={20} className="text-green-400 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-bold leading-snug truncate">{toast.title} is ready</div>
-              <div className="text-[11px] opacity-70 leading-snug">Saved to this claim's documents.</div>
-            </div>
-            <button onClick={openFromToast}
-                    className="bg-white/15 rounded-xl px-3 py-2 text-[12px] font-bold shrink-0 active:scale-95">Open</button>
-            <button onClick={() => setToast(null)}
-                    className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0"><X size={16} /></button>
-          </div>
-        </div>
+        <DocToast
+          key={toast.docId}
+          title={toast.title}
+          onOpen={openFromToast}
+          onClose={() => setToast(null)}
+        />
       )}
 
       {preview && (
@@ -309,12 +415,16 @@ export default function Documents() {
 
           {preview.url && (
             <div className="px-4 pt-2 pb-3 border-t border-gray-100 safe-bottom">
-              <a href={preview.downloadUrl || preview.url} className="btn-primary w-full py-3 justify-center text-sm">
-                <Download size={16} /> Download PDF
+              <a href={preview.openUrl || preview.url} target="_blank" rel="noopener noreferrer"
+                 className="btn-primary w-full py-3 justify-center text-sm">
+                <ExternalLink size={16} /> Open in browser
+              </a>
+              <a href={preview.downloadUrl || preview.openUrl || preview.url} target="_blank" rel="noopener noreferrer"
+                 className="btn-soft w-full py-3 justify-center text-sm mt-2">
+                <Download size={16} /> Download
               </a>
               <p className="text-[11px] text-gray-400 text-center mt-2 leading-snug">
-                On iPhone, tap <span className="font-semibold">Download</span>, then the share icon and <span className="font-semibold">Save to Files</span>.
-                On Android and desktop it saves straight to your downloads.
+                Opens the PDF in a new tab. On iPhone, tap the share icon there, then <span className="font-semibold">Save to Files</span>. On a computer it opens in a tab you can save or print.
               </p>
             </div>
           )}
