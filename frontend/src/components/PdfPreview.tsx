@@ -4,9 +4,15 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
-// Renders a PDF to canvas pages, fit to container width. Reliable on mobile
-// (unlike an <iframe>, which iOS renders blank/partial) and never needs
-// horizontal scrolling — each page scales to the width and you scroll vertically.
+// Renders a PDF to canvas pages, fit to the container width but CAPPED so a page never
+// blows up on a wide screen. On a phone the container is narrow, so pages fill it exactly
+// as before. On desktop the container is wide, and without a cap each page rendered at the
+// full container width and read as hugely zoomed in; the cap holds a page near its natural
+// on-screen size (a US Letter page is about 816px at 100%) and centers it. Reliable on
+// mobile (unlike an <iframe>, which iOS renders blank/partial) and never needs horizontal
+// scrolling: each page scales to the width and you scroll vertically.
+const MAX_PAGE_WIDTH = 820;
+
 export function PdfPreview({ url }: { url: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -21,16 +27,18 @@ export function PdfPreview({ url }: { url: string }) {
         const pdf = await pdfjsLib.getDocument({ url }).promise;
         if (cancelled) return;
         const cw = (container?.clientWidth || 360);
+        const targetW = Math.min(cw, MAX_PAGE_WIDTH);
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           if (cancelled) return;
           const base = page.getViewport({ scale: 1 });
-          const viewport = page.getViewport({ scale: (cw / base.width) * dpr });
+          const viewport = page.getViewport({ scale: (targetW / base.width) * dpr });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
-          canvas.style.width = '100%';
+          canvas.style.width = targetW + 'px';
+          canvas.style.maxWidth = '100%';
           canvas.style.height = 'auto';
           canvas.style.display = 'block';
           canvas.style.marginBottom = '10px';
@@ -54,7 +62,7 @@ export function PdfPreview({ url }: { url: string }) {
     <div className="w-full">
       {status === 'loading' && <div className="text-center text-gray-400 text-sm py-12">Rendering preview…</div>}
       {status === 'error' && <div className="text-center text-gray-400 text-sm py-12 px-6">Couldn't render the preview here. Use Open or Download below to view the full report.</div>}
-      <div ref={ref} className="w-full" />
+      <div ref={ref} className="w-full flex flex-col items-center" />
     </div>
   );
 }
