@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
 import {
   FileText, FileSpreadsheet, Download, X, ChevronRight, Trash2, Ruler, Images,
-  Loader2, CheckCircle2, FileDown, Share
+  Loader2, CheckCircle2, FileDown, Share, Map as MapIcon, ClipboardList
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { SubHeader } from '../components/SubHeader';
@@ -28,7 +28,13 @@ const docName = (d: Doc) => d.title || TYPE_LABEL[d.type] || 'Report';
 const prettyName = (d: Doc) =>
   docName(d).replace(/&/g, 'and').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Report';
 
-type BusyKey = 'report' | 'measurements' | 'log' | 'pack' | 'esx';
+// The Xactimate underlay is a PNG. Everything else we generate is a PDF. The preview and
+// the download branch on the STORED file's extension so an image is never handed to the
+// PDF viewer (which is what would happen if we keyed off type, since the underlay shares
+// the generic 'upload' type with other things).
+const isImageDoc = (d: Doc) => /\.(png|jpe?g|gif)$/i.test(d.storage_path || '');
+
+type BusyKey = 'report' | 'measurements' | 'log' | 'pack' | 'underlay' | 'entry' | 'esx';
 
 // Every generator says, in its own words, what it produces and who reads it. Each point
 // gets its OWN LINE. A tech deciding which document to build should not have to untangle a
@@ -71,6 +77,24 @@ const GENERATORS: {
       'For the homeowner, not the carrier.',
       'Photos and crew notes only.',
       'No scope, no quantities, no codes and no pricing.'
+    ]
+  },
+  {
+    key: 'underlay', endpoint: 'underlay', title: 'Xactimate Underlay', icon: MapIcon,
+    tone: 'bg-sky-soft text-sky-deep', verb: 'Drawing the floor plan',
+    lines: [
+      'A to-scale floor plan image to import as a Xactimate Sketch underlay.',
+      'Trace over it in Xactimate instead of drawing from a blank grid.',
+      'Scale it so the 10 ft bar reads 10 ft, then the plan is dimensionally correct.'
+    ]
+  },
+  {
+    key: 'entry', endpoint: 'entry-sheet', title: 'Xactimate Entry Sheet', icon: ClipboardList,
+    tone: 'bg-aqua-soft text-aqua-deep', verb: 'Listing the line items',
+    lines: [
+      'Every line item in Xactimate\'s own codes, grouped by room.',
+      'CAT, SEL, quantity and unit, with the F9 note under each line.',
+      'A tech keys it straight in. No prices, Xactimate reprices from its own list.'
     ]
   },
   {
@@ -247,16 +271,20 @@ export default function Documents() {
     } catch (e: any) { alert('Could not delete: ' + (e?.message ?? 'unknown')); }
   }
 
-  // Open a document. The PDF is fetched ONCE, as a blob, and that single blob powers both
+  // Open a document. The file is fetched ONCE, as a blob, and that single blob powers both
   // the on-screen preview and the Save / share button.
   //
-  // Why a blob and not a link: on a phone, a plain link to a PDF is unreliable. Opening it
+  // Why a blob and not a link: on a phone, a plain link to a file is unreliable. Opening it
   // as a top-level navigation gets swallowed by the PWA service worker's offline fallback
   // (it answers navigations with the app shell, which is what bounced you to the homepage),
   // and sharing a mere URL to Messages sends the raw bytes as TEXT, which is the wall of
   // random characters. A fetch() is NOT a navigation, so the service worker ignores it and
   // the file streams cleanly; and handing the native share sheet a real File object shares
-  // an actual PDF attachment, so Save to Files, Mail and Messages all get a proper document.
+  // an actual attachment, so Save to Files, Mail and Messages all get a proper document.
+  //
+  // The content type follows the stored file. Reports and the entry sheet are PDFs, the
+  // Xactimate underlay is a PNG, so both the blob's MIME and the saved filename come from
+  // the object's own extension, and the preview renders an image or a PDF accordingly.
   async function openDoc(d: Doc) {
     if (d.type === 'esx') { void downloadEsx(d); return; }
     setPreview({ doc: d, url: null, file: null, fileName: '', loading: true, error: null });
@@ -269,15 +297,21 @@ export default function Documents() {
     const t = session?.access_token;
     if (!t) { setPreview({ doc: d, url: null, file: null, fileName: '', loading: false, error: 'Please sign in again.' }); return; }
 
-    const fileName = `${prettyName(d)}.pdf`;
+    const ext = (d.storage_path.split('.').pop() || 'pdf').toLowerCase();
+    const outExt = ext === 'jpeg' ? 'jpg' : ext;
+    const mime = ext === 'png' ? 'image/png'
+      : (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg'
+      : ext === 'gif' ? 'image/gif' : 'application/pdf';
+
+    const fileName = `${prettyName(d)}.${outExt}`;
     const slug = prettyName(d).toLowerCase().replace(/[^\w]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'report';
-    const src = `${window.location.origin}/api/resto/document/${d.id}/${slug}.pdf?t=${encodeURIComponent(t)}`;
+    const src = `${window.location.origin}/api/resto/document/${d.id}/${slug}.${outExt}?t=${encodeURIComponent(t)}`;
     try {
       const res = await fetch(src);
       if (!res.ok) throw new Error(`the server returned ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const file = new File([blob], fileName, { type: 'application/pdf' });
+      const file = new File([blob], fileName, { type: mime });
       setPreview({ doc: d, url, file, fileName, loading: false, error: null });
     } catch (_e) {
       setPreview({ doc: d, url: null, file: null, fileName, loading: false, error: 'Could not load this document. It may still be generating, or you may be offline. Try again in a moment.' });
@@ -299,14 +333,14 @@ export default function Documents() {
     && typeof (navigator as any).canShare === 'function'
     && (navigator as any).canShare({ files: [f] });
 
-  // Hand the native share sheet the real PDF. Called straight from the tap with the blob
+  // Hand the native share sheet the real file. Called straight from the tap with the blob
   // already in hand, so there is no await before share() to burn the user gesture. A user
   // who cancels the sheet is not an error; a genuine failure falls back to a download.
-  async function sharePdf() {
+  async function shareFile() {
     const f = preview?.file;
     if (!f) return;
     try {
-      await (navigator as any).share({ files: [f], title: preview?.fileName || 'Report' });
+      await (navigator as any).share({ files: [f], title: preview?.fileName || 'Document' });
     } catch (err: any) {
       if (err && err.name === 'AbortError') return;   // user dismissed the sheet
       if (preview?.url) {
@@ -324,6 +358,7 @@ export default function Documents() {
   }
 
   const running = busy !== null;
+  const previewIsImage = preview ? isImageDoc(preview.doc) : false;
 
   return (
     <div className="pb-28">
@@ -394,7 +429,7 @@ export default function Documents() {
           <div key={d.id} onClick={() => openDoc(d)}
                className={`card w-full flex items-center gap-3 text-left active:scale-[.99] transition cursor-pointer ${d.id === freshId ? 'ring-2 ring-green-500/60' : ''}`}>
             <div className="w-11 h-11 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center shrink-0">
-              <FileText size={19} />
+              {isImageDoc(d) ? <Images size={19} /> : <FileText size={19} />}
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-bold leading-snug break-words">{docName(d)}</div>
@@ -447,7 +482,9 @@ export default function Documents() {
           )}
           {preview.url && (
             <div className="flex-1 overflow-y-auto px-3 py-3 bg-gray-100">
-              <PdfPreview url={preview.url} />
+              {previewIsImage
+                ? <img src={preview.url} alt={docName(preview.doc)} className="mx-auto max-w-full h-auto rounded-lg shadow-sm bg-white" />
+                : <PdfPreview url={preview.url} />}
             </div>
           )}
 
@@ -455,17 +492,17 @@ export default function Documents() {
             <div className="px-4 pt-3 pb-3 border-t border-gray-100 safe-bottom">
               {canShareFile(preview.file) ? (
                 <>
-                  <button onClick={() => void sharePdf()} className="btn-primary w-full py-3.5 justify-center text-sm">
+                  <button onClick={() => void shareFile()} className="btn-primary w-full py-3.5 justify-center text-sm">
                     <Share size={17} /> Save or share
                   </button>
                   <p className="text-[11.5px] text-gray-500 text-center mt-2.5 leading-relaxed">
-                    Opens the share sheet with the PDF attached. Save to Files, or send to Mail or Messages.
+                    Opens the share sheet with the file attached. Save to Files, or send to Mail or Messages.
                   </p>
                 </>
               ) : (
                 <>
                   <a href={preview.url} download={preview.fileName} className="btn-primary w-full py-3.5 justify-center text-sm">
-                    <Download size={17} /> Download PDF
+                    <Download size={17} /> Download {previewIsImage ? 'image' : 'PDF'}
                   </a>
                   <p className="text-[11.5px] text-gray-500 text-center mt-2.5 leading-relaxed">
                     Saves to your downloads.
