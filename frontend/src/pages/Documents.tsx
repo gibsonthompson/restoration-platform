@@ -271,22 +271,53 @@ export default function Documents() {
     } catch (e: any) { alert('Could not delete: ' + (e?.message ?? 'unknown')); }
   }
 
-  // Open a document. The file is fetched ONCE, as a blob, and that single blob powers both
-  // the on-screen preview and the Save / share button.
+  // Open a document. On a desktop-width screen the file opens in its own browser tab,
+  // because the browser's native PDF and image viewers are better on a large screen than
+  // the in-app overlay (which was rendering reports over-zoomed). On a phone it opens in
+  // the in-app blob preview below.
   //
-  // Why a blob and not a link: on a phone, a plain link to a file is unreliable. Opening it
-  // as a top-level navigation gets swallowed by the PWA service worker's offline fallback
-  // (it answers navigations with the app shell, which is what bounced you to the homepage),
-  // and sharing a mere URL to Messages sends the raw bytes as TEXT, which is the wall of
-  // random characters. A fetch() is NOT a navigation, so the service worker ignores it and
-  // the file streams cleanly; and handing the native share sheet a real File object shares
-  // an actual attachment, so Save to Files, Mail and Messages all get a proper document.
+  // Either way the file is fetched ONCE as a blob. Why a blob and not a link: on a phone a
+  // plain link is unreliable. Opening it as a top-level navigation gets swallowed by the PWA
+  // service worker's offline fallback (it answers navigations with the app shell, which is
+  // what bounced you to the homepage), and sharing a mere URL to Messages sends the raw bytes
+  // as TEXT. A fetch() is NOT a navigation, so the service worker ignores it and the file
+  // streams cleanly; and the native share sheet gets a real File. The desktop tab is handed
+  // the same blob URL, so the storage host and its random object name are never exposed and
+  // no session token lands in the address bar.
   //
   // The content type follows the stored file. Reports and the entry sheet are PDFs, the
   // Xactimate underlay is a PNG, so both the blob's MIME and the saved filename come from
   // the object's own extension, and the preview renders an image or a PDF accordingly.
   async function openDoc(d: Doc) {
     if (d.type === 'esx') { void downloadEsx(d); return; }
+
+    const desktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches;
+
+    // DESKTOP: open the file in a new tab. The tab is opened up front, synchronously with the
+    // click, so the popup blocker treats it as user-initiated; its address is filled in once
+    // the blob is ready. Auth rides in ?t= only on the fetch, never on what the tab navigates to.
+    if (desktop && d.storage_path) {
+      const win = window.open('', '_blank');
+      const { data: { session } } = await supabase.auth.getSession();
+      const t = session?.access_token;
+      if (!t) { if (win) win.close(); alert('Please sign in again.'); return; }
+      const slug = prettyName(d).toLowerCase().replace(/[^\w]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'report';
+      const src = `${window.location.origin}/api/resto/document/${d.id}/${slug}?t=${encodeURIComponent(t)}`;
+      try {
+        const res = await fetch(src);
+        if (!res.ok) throw new Error(`the server returned ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        if (win) win.location.href = url; else window.location.href = url;
+        setTimeout(() => URL.revokeObjectURL(url), 60000);   // give the tab time to load, then release
+      } catch (_e) {
+        if (win) { try { win.document.body.innerText = 'Could not load this document. It may still be generating. Close this tab and try again in a moment.'; } catch (_) { win.close(); } }
+        else alert('Could not load this document. It may still be generating. Try again in a moment.');
+      }
+      return;
+    }
+
+    // PHONE / narrow: in-app blob preview.
     setPreview({ doc: d, url: null, file: null, fileName: '', loading: true, error: null });
     if (!d.storage_path) { setPreview({ doc: d, url: null, file: null, fileName: '', loading: false, error: 'No file is stored for this document yet.' }); return; }
 
