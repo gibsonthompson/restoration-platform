@@ -293,14 +293,20 @@ export default function Documents() {
 
     const desktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches;
 
-    // DESKTOP: open the file in a new tab. The tab is opened up front, synchronously with the
-    // click, so the popup blocker treats it as user-initiated; its address is filled in once
-    // the blob is ready. Auth rides in ?t= only on the fetch, never on what the tab navigates to.
+    // DESKTOP: reports (PDF) open in a new tab for reading; the underlay (an image)
+    // downloads with a specific filename, because you need it on disk to import into
+    // Xactimate and a blob opened in a tab can only be saved under the browser's random
+    // blob id. For the tab case the blank tab is opened up front, synchronously with the
+    // click, so the popup blocker treats it as user-initiated.
     if (desktop && d.storage_path) {
-      const win = window.open('', '_blank');
+      const isImg = isImageDoc(d);
+      const win = isImg ? null : window.open('', '_blank');
       const { data: { session } } = await supabase.auth.getSession();
       const t = session?.access_token;
       if (!t) { if (win) win.close(); alert('Please sign in again.'); return; }
+      const ext = (d.storage_path.split('.').pop() || 'pdf').toLowerCase();
+      const outExt = ext === 'jpeg' ? 'jpg' : ext;
+      const fileName = `${prettyName(d)}.${outExt}`;
       const slug = prettyName(d).toLowerCase().replace(/[^\w]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'report';
       const src = `${window.location.origin}/api/resto/document/${d.id}/${slug}?t=${encodeURIComponent(t)}`;
       try {
@@ -308,11 +314,18 @@ export default function Documents() {
         if (!res.ok) throw new Error(`the server returned ${res.status}`);
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        if (win) win.location.href = url; else window.location.href = url;
-        setTimeout(() => URL.revokeObjectURL(url), 60000);   // give the tab time to load, then release
+        if (isImg) {
+          const a = document.createElement('a');
+          a.href = url; a.download = fileName;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 15000);
+        } else {
+          if (win) win.location.href = url; else window.location.href = url;
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+        }
       } catch (_e) {
         if (win) { try { win.document.body.innerText = 'Could not load this document. It may still be generating. Close this tab and try again in a moment.'; } catch (_) { win.close(); } }
-        else alert('Could not load this document. It may still be generating. Try again in a moment.');
+        else alert('Could not download this document. It may still be generating. Try again in a moment.');
       }
       return;
     }
