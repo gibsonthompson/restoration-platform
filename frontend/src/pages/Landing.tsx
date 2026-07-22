@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, X, ChevronDown, MailCheck, Image as ImageIcon, Smartphone, Monitor } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, MailCheck, Image as ImageIcon, Smartphone, Monitor } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 /*
@@ -86,6 +86,7 @@ export default function Landing() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [billing, setBilling] = useState<'annual' | 'monthly'>('annual');
 
   async function signUp() {
     const mail = email.trim();
@@ -129,15 +130,15 @@ export default function Landing() {
           </div>
           <button onClick={signUp} disabled={busy}
             className="w-full mt-2.5 bg-gradient-to-br from-sky to-sky-deep text-white rounded-xl py-3.5 font-bold shadow-sky active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2">
-            {busy ? 'Creating Your Workspace...' : <>Start Your First Claim Free <ArrowRight size={18} /></>}
+            {busy ? 'Creating Your Workspace...' : <>Start Your Free Trial <ArrowRight size={18} /></>}
           </button>
-          <p className="text-[11px] text-gray-400 mt-2.5 text-center">No credit card. No hardware. No per-project fees.</p>
+          <p className="text-[11px] text-gray-400 mt-2.5 text-center">3-day free trial. No hardware. No per-project fees.</p>
         </>
       )}
     </div>
   );
 
-  const nav_links: [string, string][] = [['How It Works', 'how'], ['Claim Defense', 'defense'], ['Xactimate', 'xactimate'], ['Compare', 'compare'], ['FAQ', 'faq']];
+  const nav_links: [string, string][] = [['How It Works', 'how'], ['Claim Defense', 'defense'], ['Xactimate', 'xactimate'], ['Compare', 'compare'], ['Pricing', 'pricing'], ['FAQ', 'faq']];
 
   return (
     <div className="h-[100dvh] overflow-y-auto bg-white text-navy">
@@ -347,35 +348,100 @@ export default function Landing() {
       <section id="compare" className="bg-sky-soft/30 scroll-mt-16">
         <div className="max-w-6xl mx-auto px-5 py-20">
           <div className="max-w-2xl mb-10">
-            <Eyebrow>Why Crews Switch</Eyebrow>
-            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Most Tools Do One Slice and Bill You for It.</h2>
-            <p className="text-gray-500 mt-2">RestoMate does the whole loss on a flat plan, so the field, the drying, and the claim defense live in one place.</p>
+            <Eyebrow>How RestoMate Compares</Eyebrow>
+            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Built for a Shop That Documents Every Job.</h2>
+            <p className="text-gray-500 mt-2">Per-project and per-sketch tools get expensive the more you work. RestoMate is flat and unlimited, with the whole loss and the claim audit in one place.</p>
           </div>
+
           <div className="card !p-0 overflow-hidden">
-            <div className="grid grid-cols-3 text-[13px]">
-              <div className="p-4 font-bold text-gray-400 uppercase tracking-wide text-[11px]">What You Get</div>
-              <div className="p-4 font-bold text-center bg-sky-soft text-sky-deep">RestoMate</div>
-              <div className="p-4 font-bold text-center text-gray-400">The Usual Setup</div>
-              {[
-                'Field Capture, Drying, Contents & Reports in One App',
-                'Pre-Submission Claim Readiness Audit',
-                'Flat Price, Unlimited Jobs and Crew',
-                'No 360 Camera or Hardware to Buy',
-                'No Per-Project or Per-Sketch Fees',
-                'Works Offline on Any Phone or Tablet',
-                'Xactimate Underlay and Entry Sheet'
-              ].map((label, i) => (
-                <div key={i} className="contents">
-                  <div className="p-4 border-t border-gray-100 text-gray-600">{label}</div>
-                  <div className="p-4 border-t border-gray-100 flex justify-center bg-sky-soft/40"><Check size={18} className="text-emerald-500" /></div>
-                  <div className="p-4 border-t border-gray-100 flex justify-center"><X size={18} className="text-gray-300" /></div>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-[13px] border-collapse">
+                <thead>
+                  <tr>
+                    <th className="text-left font-bold text-gray-400 uppercase tracking-wide text-[11px] p-4 w-[26%]">What You Get</th>
+                    <th className="p-4 text-center align-bottom bg-sky-soft">
+                      <span className="block font-display font-extrabold text-sky-deep text-[15px]">RestoMate</span>
+                    </th>
+                    <th className="p-4 text-center align-bottom font-bold text-navy">Encircle</th>
+                    <th className="p-4 text-center align-bottom font-bold text-navy">DocuSketch</th>
+                    <th className="p-4 text-center align-bottom font-bold text-navy">magicplan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['Pricing model', 'Flat, unlimited jobs & users', 'Flat, by shop size', 'Per project + per sketch', 'Per project (+ overage)'],
+                    ['Cost as job volume grows', 'Stays flat', 'Stays flat', 'Climbs with sketches', 'Climbs with projects'],
+                    ['Hardware required', 'None (phone or tablet)', 'None', '360\u00b0 camera kit', 'None'],
+                    ['Drying & psychrometrics (S500)', 'Yes, daily log + GPP', 'Yes', 'Not yet', 'Moisture mapping only'],
+                    ['Pre-submission claim audit', 'Yes, Claim Defense', 'No', 'No', 'No'],
+                    ['Photos, contents, e-signatures', 'Yes', 'Yes', 'Yes', 'Yes'],
+                    ['Works offline in the field', 'Yes', 'Yes', 'Yes', 'Yes'],
+                    ['Unlimited users', 'Yes', 'Yes', 'Per-office fees', 'Yes']
+                  ].map(([dim, rm, en, ds, mp], i) => (
+                    <tr key={i} className="border-t border-gray-100">
+                      <td className="p-4 font-semibold text-gray-600">{dim}</td>
+                      <td className="p-4 text-center bg-sky-soft/40 font-bold text-navy">{rm}</td>
+                      <td className="p-4 text-center text-gray-500">{en}</td>
+                      <td className="p-4 text-center text-gray-500">{ds}</td>
+                      <td className="p-4 text-center text-gray-500">{mp}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-          <p className="text-[12px] text-gray-400 mt-3 max-w-2xl">
-            &ldquo;The usual setup&rdquo; means stitching Encircle for documentation, DocuSketch for sketches (a camera to buy and per-sketch fees), and magicplan billed per project, then reconciling drying and audit by hand.
-          </p>
+          <p className="text-[11px] text-gray-400 mt-3">Competitor details compiled from public pricing and product pages, 2026. Verify current specifics with each vendor.</p>
+        </div>
+      </section>
+
+      {/* pricing */}
+      <section id="pricing" className="max-w-6xl mx-auto px-5 py-20 scroll-mt-16">
+        <div className="max-w-2xl mb-10">
+          <Eyebrow>Pricing</Eyebrow>
+          <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">One Plan. Everything In. Unlimited Jobs.</h2>
+          <p className="text-gray-500 mt-2">No tiers, no per-project fees, no hardware. Every feature, every crew member, every claim, one flat price.</p>
+        </div>
+
+        <div className="rounded-3xl bg-navy text-white overflow-hidden relative">
+          <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-sky/20 blur-3xl" />
+          <div className="relative grid lg:grid-cols-[0.9fr_1.1fr]">
+            {/* offer */}
+            <div className="p-8 sm:p-10 lg:border-r border-white/10">
+              <div className="inline-flex items-center bg-white/10 rounded-full p-1 text-[13px] font-bold">
+                <button onClick={() => setBilling('monthly')} className={`px-4 py-1.5 rounded-full transition ${billing === 'monthly' ? 'bg-white text-navy' : 'text-white/70'}`}>Monthly</button>
+                <button onClick={() => setBilling('annual')} className={`px-4 py-1.5 rounded-full transition ${billing === 'annual' ? 'bg-white text-navy' : 'text-white/70'}`}>Annual</button>
+              </div>
+
+              <div className="mt-6 flex items-end gap-2">
+                <span className="font-display font-extrabold text-[54px] leading-none">{billing === 'annual' ? '$2,000' : '$249'}</span>
+                <span className="text-white/60 font-semibold mb-2">{billing === 'annual' ? '/year' : '/month'}</span>
+              </div>
+              <div className="mt-2 text-[13px] text-white/70">
+                {billing === 'annual'
+                  ? <>That&rsquo;s $167/mo, billed annually. <span className="text-aqua font-bold">Save $988 a Year.</span></>
+                  : <>Billed monthly, or pay $2,000/year and save $988.</>}
+              </div>
+
+              <div className="mt-6 inline-flex items-center gap-2 bg-white/10 rounded-full px-3.5 py-1.5 text-[12px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-aqua" /> Starts With a 3-Day Free Trial
+              </div>
+
+              <button onClick={scrollToSignup} className="w-full mt-6 bg-white text-navy font-bold rounded-xl py-3.5 active:scale-[0.99] inline-flex items-center justify-center gap-2">
+                Start Your Free Trial <ArrowRight size={18} />
+              </button>
+              <p className="text-[11px] text-white/50 mt-3 text-center">No hardware. No per-project fees. Cancel anytime.</p>
+            </div>
+
+            {/* included */}
+            <div className="p-8 sm:p-10">
+              <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-white/50 mb-4">Everything Included</div>
+              <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-[14px]">
+                {['Unlimited Claims', 'Unlimited Users & Crew', 'Field Capture & Moisture Maps', 'Drying & S500 Log', 'Contents Inventory', 'GPS Photo Proof', 'E-Signatures', 'Claim Defense Audit', 'Xactimate Underlay & Entry Sheet', 'Branded Carrier-Ready Reports', 'Offline Capture', 'Custom Branding'].map((f) => (
+                  <div key={f} className="flex items-center gap-2.5"><Check size={17} className="text-aqua shrink-0" /> <span className="text-white/85">{f}</span></div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -408,8 +474,8 @@ export default function Landing() {
           <div className="relative">
             <img src="/restomate-logo-white.svg" alt="RestoMate" className="h-8 w-auto mx-auto mb-6" />
             <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.06] max-w-2xl mx-auto">Document the Next Job Like It&rsquo;s Going to Get Scrubbed.</h2>
-            <p className="text-white/70 mt-4 max-w-lg mx-auto">Start your first claim free. No credit card, no hardware, no per-project fees.</p>
-            <button onClick={scrollToSignup} className="mt-7 bg-white text-navy font-bold rounded-xl px-7 py-3.5 active:scale-[0.99] inline-flex items-center gap-2">Start Free <ArrowRight size={18} /></button>
+            <p className="text-white/70 mt-4 max-w-lg mx-auto">Start with a 3-day free trial. Then $249/mo or $2,000/yr, unlimited jobs and crew, no hardware.</p>
+            <button onClick={scrollToSignup} className="mt-7 bg-white text-navy font-bold rounded-xl px-7 py-3.5 active:scale-[0.99] inline-flex items-center gap-2">Start Your Free Trial <ArrowRight size={18} /></button>
           </div>
         </div>
       </section>
@@ -425,6 +491,7 @@ export default function Landing() {
             <button onClick={() => scrollToId('how')} className="hover:text-navy">How It Works</button>
             <button onClick={() => scrollToId('defense')} className="hover:text-navy">Claim Defense</button>
             <button onClick={() => scrollToId('compare')} className="hover:text-navy">Compare</button>
+            <button onClick={() => scrollToId('pricing')} className="hover:text-navy">Pricing</button>
             <button onClick={() => scrollToId('faq')} className="hover:text-navy">FAQ</button>
             <Link to="/login" className="hover:text-navy">Sign In</Link>
             <button onClick={scrollToSignup} className="hover:text-navy">Start Free</button>
