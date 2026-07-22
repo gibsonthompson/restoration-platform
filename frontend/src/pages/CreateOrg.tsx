@@ -28,7 +28,7 @@ export default function CreateOrg() {
   return (
     <div className="h-[100dvh] flex items-center justify-center p-6 bg-[#E4E9F0]">
       <div className="card w-full max-w-sm !p-6 space-y-4">
-        <img src="/documate-logo.svg" alt="DocuMate" className="h-7 w-auto mx-auto" />
+        <img src="/restomate-logo.svg" alt="DocuMate" className="h-7 w-auto mx-auto" />
         <div className="text-center">
           <h1 className="font-display font-bold text-xl text-navy">Name your company</h1>
           <p className="text-sm text-gray-500 mt-1">This is your workspace. You’ll be the owner.</p>

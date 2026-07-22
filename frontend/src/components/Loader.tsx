@@ -3,7 +3,7 @@
 // for dark ones (the navy app header, where the near-black "Docu" would vanish).
 export function Logo({ className = 'h-12 w-auto', variant = 'color' }:
   { className?: string; variant?: 'color' | 'white' }) {
-  const src = variant === 'white' ? '/documate-logo-white.svg' : '/documate-logo.svg';
+  const src = variant === 'white' ? '/restomate-logo-white.svg' : '/restomate-logo.svg';
   return <img src={src} alt="DocuMate" className={className} />;
 }
 
