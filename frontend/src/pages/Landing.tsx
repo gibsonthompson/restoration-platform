@@ -4,24 +4,31 @@ import { ArrowRight, Check, ChevronDown, MailCheck, Image as ImageIcon, Smartpho
 import { supabase } from '../lib/supabase';
 
 /*
-  RestoMate marketing / landing page.
+  ScopeBook marketing / landing page.
 
-  Design intent (deliberately NOT the templated SaaS look):
-   - Image-forward and editorial. Real in-context photos of crews using the app
-     and real UI screenshots carry the page. Icons are almost absent on purpose.
-   - Asymmetric split hero with a photo, not a dashboard floating on a gradient.
-   - Copy leads with the OUTCOME (collect the full invoice) in restoration
-     vernacular (the scrub, GPP, S500, equipment-days, Cat/Class).
-   - Headings, labels, nav, buttons, card titles and chips are Title Case; body
-     copy and FAQ answers stay sentence case for readability.
-   - The three-phase story is a real sequence, so it is numbered 01 / 02 / 03.
+  Voice: written the way a restoration owner talks about the money fight, not
+  insurance-speak. The pain is the GAP, the estimate comes back light and
+  justified line items get cut, so supplements drag and you eat 10-20%. The
+  promise is getting paid the full scope. Real terms: line items, cut / reduced /
+  denied, supplement, F9 rationale, equipment-days, moisture readings, drying log.
 
-  Every image is a <Shot/>: a labeled, on-brand placeholder now; a real image the
-  moment you pass `src`. The placeholder names the exact file to drop into
-  public/site/. Design tokens match the app (index.css / tailwind.config):
-  Bricolage Grotesque display, navy / sky / sky-deep / aqua, `card`, shadow-soft.
-  Signup logic is untouched.
+  Design intent (deliberately NOT the templated SaaS look): image-forward and
+  editorial, real photos and UI screenshots carry it, icons nearly absent.
+  Headings/labels/nav/buttons are Title Case; body stays sentence case.
+
+  Every image is a <Shot/>: labeled placeholder now, real image the moment you
+  pass `src` (drop files in public/site/). The logo is a text <Wordmark/> until a
+  real ScopeBook SVG exists (the old file is a RestoMate wordmark and cannot be
+  reused). Design tokens match the app. Signup logic is untouched.
 */
+
+function Wordmark({ light = false, className = '' }: { light?: boolean; className?: string }) {
+  return (
+    <span className={`font-display font-extrabold tracking-tight leading-none ${className}`}>
+      <span className={light ? 'text-white' : 'text-navy'}>Scope</span><span className={light ? 'text-aqua' : 'text-sky-deep'}>Book</span>
+    </span>
+  );
+}
 
 type ShotKind = 'photo' | 'phone' | 'tablet' | 'browser';
 function Shot({ kind, label, file, src, className = '' }: { kind: ShotKind; label: string; file: string; src?: string; className?: string }) {
@@ -145,7 +152,7 @@ export default function Landing() {
       {/* nav */}
       <header className="sticky top-0 z-30 bg-white/85 backdrop-blur border-b border-gray-100">
         <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
-          <Link to="/welcome" className="flex items-center"><img src="/restomate-logo.svg" alt="RestoMate" className="h-7 w-auto" /></Link>
+          <Link to="/welcome" className="flex items-center"><Wordmark className="text-[22px]" /></Link>
           <nav className="hidden md:flex items-center gap-6 text-[13px] font-semibold text-gray-500">
             {nav_links.map(([l, id]) => <button key={id} onClick={() => scrollToId(id)} className="hover:text-navy transition">{l}</button>)}
           </nav>
@@ -161,25 +168,24 @@ export default function Landing() {
         <div>
           <Eyebrow>Water &middot; Fire &middot; Mold Field Documentation</Eyebrow>
           <h1 className="font-display font-extrabold text-[40px] sm:text-[52px] leading-[1.03] tracking-tight">
-            Leave the Job With the Claim <span className="text-sky-deep">Already Built.</span>
+            Get Paid for the Whole Job, <span className="text-sky-deep">Not Most of It.</span>
           </h1>
           <p className="text-[17px] text-gray-500 mt-5 leading-relaxed max-w-lg">
-            RestoMate turns what your crew documents on-site into a carrier-ready package that survives the adjuster&rsquo;s scrub, so you collect the full invoice instead of arguing for it.
+            On insurance work the estimate comes back light and justified line items get cut, so most shops quietly eat a 10 to 20% gap. ScopeBook documents every line in the field, moisture readings, photos, drying logs, F9 rationale, so it gets approved instead of reduced and you collect the full scope.
           </p>
           <div id="signup" className="mt-7 max-w-xl scroll-mt-24">{signupCard}</div>
           <p className="mt-4 text-[12px] font-semibold text-gray-400">Already have an account? <Link to="/login" className="text-sky-deep">Sign In</Link></p>
         </div>
 
-        {/* photo with overlapping real UI card (desktop only, keeps mobile clean) */}
         <div className="relative">
           <Shot kind="photo" className="aspect-[4/5]"
-            label="Photo: Restoration Tech Using RestoMate on a Tablet in a Gutted, Drying Room"
+            label="Photo: Restoration Tech Using ScopeBook on a Tablet in a Gutted, Drying Room"
             file="/site/hero.jpg" />
           <div className="hidden sm:block absolute -bottom-5 -left-6 w-44">
             <Shot kind="phone" label="Claim Readiness Score" file="/site/ui-claim-readiness.png" />
           </div>
           <div className="hidden sm:flex absolute -top-3 -right-3 items-center gap-2 bg-white rounded-full shadow-soft px-3.5 py-2 text-[12px] font-bold">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Carrier-Ready, 94/100
+            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Claim Ready, 94/100
           </div>
         </div>
       </section>
@@ -198,19 +204,19 @@ export default function Landing() {
       <section id="how" className="max-w-6xl mx-auto px-5 py-20 scroll-mt-16">
         <div className="max-w-2xl">
           <Eyebrow>How It Works</Eyebrow>
-          <h2 className="font-display font-extrabold text-[30px] sm:text-[38px] leading-[1.06]">One Job. One App. From the Wet Basement to the Wire Transfer.</h2>
+          <h2 className="font-display font-extrabold text-[30px] sm:text-[38px] leading-[1.06]">One Job, One File, From First Photo to Final Payment.</h2>
         </div>
 
         {/* 01 */}
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-14">
           <div>
             <Eyebrow n="01">On-Site</Eyebrow>
-            <h3 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight">Capture the Loss While You&rsquo;re Standing in It.</h3>
+            <h3 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight">Document Every Line While You&rsquo;re Standing in It.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Moisture maps, flood cuts, containment, equipment placement, GPS and time-stamped photos, contents, and signatures, all on the phone the crew already carries. In a dead basement with no signal it keeps working and syncs when you surface.
+              Moisture maps, flood cuts, containment, equipment placement, GPS and time-stamped photos, contents, and signatures, all on the phone the crew already carries. The proof that backs a supplement is captured as you work, not reconstructed from memory a week later.
             </p>
             <div className="mt-5 flex flex-wrap gap-2 text-[12px] font-semibold text-navy">
-              {['Moisture Map', 'GPS Photo Proof', 'Contents Inventory', 'E-Signatures'].map((t) => (
+              {['Moisture Readings', 'GPS Photo Proof', 'Contents Inventory', 'E-Signatures'].map((t) => (
                 <span key={t} className="bg-sky-soft rounded-full px-3 py-1.5">{t}</span>
               ))}
             </div>
@@ -228,14 +234,14 @@ export default function Landing() {
           <div className="order-2 lg:order-1 relative">
             <Shot kind="browser" label="Carrier-Ready Report & Share Link" file="/site/ui-report.png" />
             <div className="hidden sm:block absolute -bottom-6 -left-4 w-40">
-              <Shot kind="photo" className="aspect-[4/3]" label="Photo: Owner Reviewing the Report" file="/site/handoff.jpg" />
+              <Shot kind="photo" className="aspect-[4/3]" label="Photo: Owner Reviewing the File" file="/site/handoff.jpg" />
             </div>
           </div>
           <div className="order-1 lg:order-2">
             <Eyebrow n="03">Handoff</Eyebrow>
-            <h3 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight">Hand the Adjuster a Package, Not a Shoebox.</h3>
+            <h3 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight">Hand the Adjuster a File That Backs Every Line.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              A branded report and a full daily drying log, sent as one clean link or PDF. Every reading, photo, and signature is where the carrier expects it, so the file gets approved instead of kicked back for more documentation.
+              A branded report and a full daily drying log, sent as one clean link or PDF. Every reading, photo, and note lines up with the scope, so line items get approved instead of reduced, and supplements move instead of stalling.
             </p>
           </div>
         </div>
@@ -246,14 +252,14 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-5 py-20 grid lg:grid-cols-2 gap-12 lg:gap-14 items-center">
           <div>
             <Eyebrow n="02"><span className="text-white/50">Before You Submit</span></Eyebrow>
-            <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.05]">The Adjuster&rsquo;s Scrub, Run on <span className="text-aqua">Your</span> Side First.</h2>
+            <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.05]">Catch the Cut <span className="text-aqua">Before</span> the Carrier Does.</h2>
             <p className="text-white/70 mt-4 leading-relaxed max-w-md">
-              Claim Defense scores every job against the same audit-by-exception checks carriers use, then tells you exactly what to fix: missing daily readings, unsigned authorizations, thin monitoring, equipment-days the S500 calc won&rsquo;t back. You close the gaps before you send, so nothing gets cut after.
+              Carriers reduce or deny the same line items over and over, usually because the file is missing the one thing that justifies them. Before your file goes out, ScopeBook checks every commonly-cut line for its proof, the photo, the reading, the drying log, the F9 note, and shows you the gap. You close it, so the line gets approved instead of reduced.
             </p>
             <ul className="mt-6 space-y-3 max-w-md">
               {[
-                ['Predicts the Cut Lines', 'Flags the exact items carriers challenge, ranked by what costs you most.'],
-                ['Defends the Invoice', 'Ties equipment-days and drying time back to the readings that justify them.'],
+                ['Flags the Lines Carriers Cut', 'Checks commonly-challenged items for the photo, reading, log, or F9 note that backs them.'],
+                ['Defends Every Equipment-Day', 'Ties drying time and equipment to the readings that justify them on the invoice.'],
                 ['Nothing Auto-Submits', 'It scores and warns. You review and send. Always.']
               ].map(([t, d]) => (
                 <li key={t} className="flex gap-3">
@@ -274,9 +280,9 @@ export default function Landing() {
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
           <div>
             <Eyebrow>Drying &amp; S500</Eyebrow>
-            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">A Drying Log That Fills Itself In and Holds Up.</h2>
+            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">A Drying Log That Justifies Every Equipment-Day.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Set the chambers, drop your air movers and dehus, and log readings. RestoMate does the psychrometrics, tracks GPP toward the dry standard, and builds the daily log automatically, so the monitoring story is complete without a clipboard.
+              Set the chambers, drop your air movers and dehus, and log readings. ScopeBook runs the psychrometrics, tracks GPP toward the dry standard, and builds the daily log automatically, so the equipment-days on your invoice are backed by the numbers instead of argued over.
             </p>
           </div>
           <div className="relative">
@@ -296,7 +302,7 @@ export default function Landing() {
             <Eyebrow>Xactimate Handoff</Eyebrow>
             <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Feed Xactimate Without Re-Drawing the Job.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Export each level as a to-scale underlay with a calibration line, plus a room-by-room entry sheet of scope and quantities. Your estimator traces real measurements and keys real numbers, instead of starting over on a blank grid.
+              Export each level as a to-scale underlay with a calibration line, plus a room-by-room entry sheet of scope and quantities. Your estimator builds the estimate from real measurements, in the format adjusters approve faster and cut less, because they can compare it line by line.
             </p>
             <div className="mt-5 grid sm:grid-cols-2 gap-3 text-[13px]">
               <div className="card !p-3.5"><div className="font-bold">Scaled Underlay</div><div className="text-gray-500 mt-0.5">Trace the rooms right over it.</div></div>
@@ -312,7 +318,7 @@ export default function Landing() {
         <div className="absolute inset-0 bg-navy/55 flex items-center">
           <div className="max-w-6xl mx-auto px-5 w-full">
             <p className="font-display font-extrabold text-white text-[26px] sm:text-[36px] leading-tight max-w-2xl">
-              You Did the Work. RestoMate Makes Sure the Paperwork Proves It.
+              You Did the Work. ScopeBook Makes Sure You Get Paid for It.
             </p>
           </div>
         </div>
@@ -322,7 +328,7 @@ export default function Landing() {
       <section className="max-w-6xl mx-auto px-5 py-20">
         <div className="max-w-2xl mb-10">
           <Eyebrow>All in One App</Eyebrow>
-          <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Everything the Loss Needs, Nothing the Office Has to Chase.</h2>
+          <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Everything the File Needs, Nothing the Office Has to Chase.</h2>
         </div>
         <div className="grid sm:grid-cols-3 gap-3">
           <div className="sm:row-span-2 card !p-0 overflow-hidden">
@@ -334,7 +340,7 @@ export default function Landing() {
             ['Floor Plan Sketch', 'Draw each room to scale, snap the level together.'],
             ['Offline Capture', 'Document in a dead basement; it syncs later.'],
             ['E-Signatures', 'Authorizations and completion certs signed on-site.'],
-            ['Branded Reports', 'Your logo on the package the carrier reads.']
+            ['Branded Reports', 'Your logo on the file the carrier reads.']
           ].map(([t, d]) => (
             <div key={t} className="card !p-4">
               <div className="font-bold text-[14px]">{t}</div>
@@ -348,9 +354,9 @@ export default function Landing() {
       <section id="compare" className="bg-sky-soft/30 scroll-mt-16">
         <div className="max-w-6xl mx-auto px-5 py-20">
           <div className="max-w-2xl mb-10">
-            <Eyebrow>How RestoMate Compares</Eyebrow>
+            <Eyebrow>How ScopeBook Compares</Eyebrow>
             <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Built for a Shop That Documents Every Job.</h2>
-            <p className="text-gray-500 mt-2">Per-project and per-sketch tools get expensive the more you work. RestoMate is flat and unlimited, with the whole loss and the claim audit in one place.</p>
+            <p className="text-gray-500 mt-2">Per-project and per-sketch tools get expensive the more you work. ScopeBook is flat and unlimited, with the whole file and the claim audit in one place.</p>
           </div>
 
           <div className="card !p-0 overflow-hidden">
@@ -359,9 +365,7 @@ export default function Landing() {
                 <thead>
                   <tr>
                     <th className="text-left font-bold text-gray-400 uppercase tracking-wide text-[11px] p-4 w-[26%]">What You Get</th>
-                    <th className="p-4 text-center align-bottom bg-sky-soft">
-                      <span className="block font-display font-extrabold text-sky-deep text-[15px]">RestoMate</span>
-                    </th>
+                    <th className="p-4 text-center align-bottom bg-sky-soft"><Wordmark className="text-[15px]" /></th>
                     <th className="p-4 text-center align-bottom font-bold text-navy">Encircle</th>
                     <th className="p-4 text-center align-bottom font-bold text-navy">DocuSketch</th>
                     <th className="p-4 text-center align-bottom font-bold text-navy">magicplan</th>
@@ -405,7 +409,6 @@ export default function Landing() {
         <div className="rounded-3xl bg-navy text-white overflow-hidden relative">
           <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-sky/20 blur-3xl" />
           <div className="relative grid lg:grid-cols-[0.9fr_1.1fr]">
-            {/* offer */}
             <div className="p-8 sm:p-10 lg:border-r border-white/10">
               <div className="inline-flex items-center bg-white/10 rounded-full p-1 text-[13px] font-bold">
                 <button onClick={() => setBilling('monthly')} className={`px-4 py-1.5 rounded-full transition ${billing === 'monthly' ? 'bg-white text-navy' : 'text-white/70'}`}>Monthly</button>
@@ -432,7 +435,6 @@ export default function Landing() {
               <p className="text-[11px] text-white/50 mt-3 text-center">No hardware. No per-project fees. Cancel anytime.</p>
             </div>
 
-            {/* included */}
             <div className="p-8 sm:p-10">
               <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-white/50 mb-4">Everything Included</div>
               <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-[14px]">
@@ -447,15 +449,15 @@ export default function Landing() {
 
       {/* FAQ */}
       <section id="faq" className="max-w-3xl mx-auto px-5 py-20 scroll-mt-16">
-        <div className="mb-9"><Eyebrow>Straight Answers</Eyebrow><h2 className="font-display font-extrabold text-[28px] sm:text-[34px]">Questions Crews Ask.</h2></div>
+        <div className="mb-9"><Eyebrow>Straight Answers</Eyebrow><h2 className="font-display font-extrabold text-[28px] sm:text-[34px]">Questions Owners Ask.</h2></div>
         <div className="space-y-3">
           {[
-            ['Do I need a 360 camera or any hardware?', 'No. RestoMate runs on the phone or tablet the crew already carries. Nothing to buy, nothing to charge overnight.'],
-            ['Does it work offline in the field?', 'Yes. Document a job with no signal and it syncs automatically once you are back online.'],
+            ['Will this help my supplements get approved?', 'That is the point. Supplements get denied or delayed mostly for missing documentation. ScopeBook captures the readings, photos, drying logs, and F9 rationale that back each line, and flags what is missing before you submit.'],
             ['Does it work with Xactimate?', 'Yes. Export a to-scale underlay to trace in Xactimate plus a room-by-room entry sheet of scope and quantities to key in.'],
+            ['Do I need a 360 camera or any hardware?', 'No. ScopeBook runs on the phone or tablet the crew already carries. Nothing to buy, nothing to charge overnight.'],
+            ['Does it work offline in the field?', 'Yes. Document a job with no signal and it syncs automatically once you are back online.'],
             ['Are there per-project or per-sketch fees?', 'No. One flat price, unlimited claims and unlimited crew. No overages, no rush charges, no per-sketch billing.'],
-            ['Is the report actually carrier-ready?', 'Yes. A branded report and daily drying log, shared by clean link or PDF, built to hold up line by line under the scrub.'],
-            ['What losses is it built for?', 'Water, fire, and mold, from the first photo on-site through the carrier-ready package.']
+            ['What losses is it built for?', 'Water, fire, and mold, from the first photo on-site through the carrier-ready file.']
           ].map(([q, a], i) => (
             <details key={i} className="group card !p-0 overflow-hidden">
               <summary className="flex items-center justify-between gap-4 cursor-pointer list-none p-4 font-bold text-[15px]">
@@ -472,8 +474,8 @@ export default function Landing() {
         <div className="rounded-3xl bg-gradient-to-br from-navy-soft to-navy text-white p-9 sm:p-14 text-center relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-sky/20 blur-3xl" />
           <div className="relative">
-            <img src="/restomate-logo-white.svg" alt="RestoMate" className="h-8 w-auto mx-auto mb-6" />
-            <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.06] max-w-2xl mx-auto">Document the Next Job Like It&rsquo;s Going to Get Scrubbed.</h2>
+            <Wordmark light className="text-[30px] block mb-6" />
+            <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.06] max-w-2xl mx-auto">Stop Eating the Gap. Document the Next Job Right.</h2>
             <p className="text-white/70 mt-4 max-w-lg mx-auto">Start with a 3-day free trial. Then $249/mo or $2,000/yr, unlimited jobs and crew, no hardware.</p>
             <button onClick={scrollToSignup} className="mt-7 bg-white text-navy font-bold rounded-xl px-7 py-3.5 active:scale-[0.99] inline-flex items-center gap-2">Start Your Free Trial <ArrowRight size={18} /></button>
           </div>
@@ -484,7 +486,7 @@ export default function Landing() {
       <footer className="border-t border-gray-100">
         <div className="max-w-6xl mx-auto px-5 py-9 grid sm:grid-cols-2 gap-6 items-center">
           <div>
-            <img src="/restomate-logo.svg" alt="RestoMate" className="h-6 w-auto" />
+            <Wordmark className="text-[18px]" />
             <p className="text-[13px] text-gray-400 mt-3 max-w-xs leading-relaxed">Field documentation and claim defense for water, fire, and mold restoration.</p>
           </div>
           <div className="flex flex-wrap sm:justify-end gap-x-6 gap-y-2 text-sm text-gray-500">
@@ -494,12 +496,11 @@ export default function Landing() {
             <button onClick={() => scrollToId('pricing')} className="hover:text-navy">Pricing</button>
             <button onClick={() => scrollToId('faq')} className="hover:text-navy">FAQ</button>
             <Link to="/login" className="hover:text-navy">Sign In</Link>
-            <button onClick={scrollToSignup} className="hover:text-navy">Start Free</button>
           </div>
         </div>
         <div className="border-t border-gray-100">
           <div className="max-w-6xl mx-auto px-5 py-4 text-[12px] text-gray-400 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <span>&copy; {new Date().getFullYear()} RestoMate</span>
+            <span>&copy; {new Date().getFullYear()} ScopeBook</span>
             <span>Built With Restoration Crews in the Field.</span>
           </div>
         </div>
