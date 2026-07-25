@@ -649,7 +649,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const startCorner: Pt | null = buildCorners.length ? buildCorners[0] : null;
   // Is the aimed free end sitting on the starting corner? Then setting it closes the room.
   const aimClosesRoom = !!(aimEnd && startCorner && buildCorners.length >= 3
-    && Math.hypot(aimEnd[0] - startCorner[0], aimEnd[1] - startCorner[1]) < 14 / k);
+    && Math.hypot(aimEnd[0] - startCorner[0], aimEnd[1] - startCorner[1]) < 14 / view.k);
 
   // Type / retype the current wall's length. First wall starts the aim pointing right;
   // retyping an existing aim keeps its angle and only swaps the length.
@@ -893,7 +893,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const activeRoomKey = tool === 'door' ? doorKind : tool === 'room' ? roomMode : '';
   function pickRoom(key: string) {
     setLastRoomKey(key);
-    if (key === 'rect') { setRoomMode('rect'); selectTool('room'); setBuild(null); setDirPick(null); setSizeSheet(true); }
+    if (key === 'rect') { setRoomMode('rect'); selectTool('room'); setBuild(null); setAim(null); setLenSheet(false); setSizeSheet(true); }
     else if (key === 'custom') { setRoomMode('custom'); selectTool('room'); }
     else { setDoorKind(key as OpeningKind); selectTool('door'); }
   }
