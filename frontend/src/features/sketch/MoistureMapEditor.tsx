@@ -221,6 +221,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [build, setBuild] = useState<RoomBuild | null>(null);
   const [aim, setAim] = useState<AimWall | null>(null);
   const [lenSheet, setLenSheet] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);   // walls miss the start: warn before closing
 
   // ---- MEASUREMENT STATE ----
   const [ceilingFt, setCeilingFt] = useState<number | null>(null);
@@ -642,14 +643,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // next wall. Dragging the free end onto the starting corner, or "Close room", finishes.
   const buildCorners = build?.corners ?? [];
   const buildEnd: Pt | null = buildCorners.length ? buildCorners[buildCorners.length - 1] : null;
-  // The live free end of the wall being aimed.
-  const aimEnd: Pt | null = buildEnd && aim
+  const startCorner: Pt | null = buildCorners.length ? buildCorners[0] : null;
+  // The raw free end of the wall being aimed, before any snap to the start corner.
+  const aimEndRaw: Pt | null = buildEnd && aim
     ? [buildEnd[0] + Math.cos(aim.angle) * aim.lenU, buildEnd[1] + Math.sin(aim.angle) * aim.lenU]
     : null;
-  const startCorner: Pt | null = buildCorners.length ? buildCorners[0] : null;
-  // Is the aimed free end sitting on the starting corner? Then setting it closes the room.
-  const aimClosesRoom = !!(aimEnd && startCorner && buildCorners.length >= 3
-    && Math.hypot(aimEnd[0] - startCorner[0], aimEnd[1] - startCorner[1]) < 14 / view.k);
+  // Is the aimed free end close enough to the start corner to close onto it? Snap reach is
+  // generous (a fingertip), and the wall must be the fourth or later so a room has 3+ sides.
+  const aimClosesRoom = !!(aimEndRaw && startCorner && buildCorners.length >= 3
+    && Math.hypot(aimEndRaw[0] - startCorner[0], aimEndRaw[1] - startCorner[1]) < 26 / view.k);
+  // The free end the tech actually sees: SNAPPED to the start corner when it is in reach, so
+  // the last wall lands exactly on the origin and the room truly closes, no floating gap.
+  const aimEnd: Pt | null = aimClosesRoom && startCorner ? startCorner : aimEndRaw;
 
   // Type / retype the current wall's length. First wall starts the aim pointing right;
   // retyping an existing aim keeps its angle and only swaps the length.
@@ -658,10 +663,11 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     setAim(a => ({ lenU, angle: a ? a.angle : 0 }));
     setLenSheet(false);
   }
-  // Plant the aimed wall's free end as a real corner and begin the next wall.
+  // Plant the aimed wall's free end as a real corner and begin the next wall. If the tech
+  // aimed it onto the start corner, that plants the closing wall and finishes the room.
   function setCorner() {
     if (!buildEnd || !aim || !aimEnd) return;
-    if (aimClosesRoom) { closeRoom(); return; }
+    if (aimClosesRoom) { commitRoom(buildCorners); return; }   // last wall lands on start: close clean
     setBuild({ corners: [...buildCorners, aimEnd] });
     setAim(null);
     setLenSheet(true);   // straight into the next wall's length
@@ -672,18 +678,26 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     setBuild({ corners: buildCorners.slice(0, -1) });
     setAim(null);
   }
-  // Close by drawing one final wall from the last PLACED corner straight to the start.
-  // Works whether or not a wall is mid-aim: the closing edge is the gap, so the shape can
-  // never be left open.
-  function closeRoom() {
-    const pts = aim && aimEnd && !aimClosesRoom ? [...buildCorners, aimEnd] : buildCorners;
-    commitRoom(pts);
+  // How far the placed walls miss the start corner by, in feet. This is the honest number:
+  // if it is more than an inch or so, the typed lengths do not actually meet and the tech
+  // should know before it goes on a carrier document.
+  const closeGapFt: number = buildEnd && startCorner
+    ? Math.hypot(buildEnd[0] - startCorner[0], buildEnd[1] - startCorner[1]) / UNITS_PER_FT
+    : 0;
+  // Close the room from the last PLACED corner. If the walls already meet the start (within
+  // an inch) it just closes. If they miss, we ask first and name the gap, because closing
+  // anyway means the closing wall is whatever length reaches the start, not what was typed.
+  function requestClose() {
+    if (aim) { setAim(null); }              // drop any half-aimed wall; we close from placed corners
+    if (buildCorners.length < 3) return;
+    if (closeGapFt <= 1 / 12 + 1e-6) { commitRoom(buildCorners); return; }
+    setConfirmClose(true);
   }
   function commitRoom(pts: Pt[]) {
-    if (pts.length < 3 || polygonArea(pts) < UNITS_PER_FT * UNITS_PER_FT * 0.25) { setBuild(null); setAim(null); setLenSheet(false); return; }
+    if (pts.length < 3 || polygonArea(pts) < UNITS_PER_FT * UNITS_PER_FT * 0.25) { setBuild(null); setAim(null); setLenSheet(false); setConfirmClose(false); return; }
     snapshot();
     setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
-    setBuild(null); setAim(null); setLenSheet(false);
+    setBuild(null); setAim(null); setLenSheet(false); setConfirmClose(false);
     selectTool('move');
   }
   // The outline as it would close right now, for the fill/area preview.
@@ -871,6 +885,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     if (t === 'floodcut' || t === 'containment') setLastScope(t);
     if (activeWetId && t !== 'wet') { setPendingWetId(activeWetId); setActiveWetId(null); }
     if (t !== 'floodcut') setSelectedFlood(null);
+    if (t !== 'room') { setBuild(null); setAim(null); setLenSheet(false); setConfirmClose(false); }
     setSelectedId(null); setSelEdge(null); setDraft(null); setActive(null); setGuide(null);
   };
 
@@ -1365,7 +1380,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
               Wall {buildCorners.length}
             </span>
             <span className="text-[11px] font-semibold text-gray-500">
-              {aim ? (aimClosesRoom ? 'On the start corner. Set to close.' : 'Drag the orange dot to aim it.') : 'Type this wall\u2019s length.'}
+              {aim ? (aimClosesRoom ? 'On the start corner. Tap Close room.' : 'Drag the orange dot to aim it. Bring it onto the start corner to close.') : 'Type this wall\u2019s length.'}
             </span>
           </div>
           {aim ? (
@@ -1384,12 +1399,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
                   {aimClosesRoom ? 'Close room' : 'Set corner'}
                 </button>
               </div>
-              {placedWalls >= 2 && !aimClosesRoom && (
-                <button onClick={closeRoom}
-                  className="w-full mt-2 py-2 rounded-xl text-sm font-bold text-navy border border-navy/20 active:bg-navy/5">
-                  Close straight to start
-                </button>
-              )}
             </>
           ) : (
             <div className="flex gap-2 mt-1.5">
@@ -1401,14 +1410,43 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
                 className="btn-primary flex-1 py-2.5 justify-center text-sm">
                 <Ruler size={16} /> Add wall
               </button>
-              {placedWalls >= 2 && (
-                <button onClick={closeRoom}
+              {placedWalls >= 3 && (
+                <button onClick={requestClose}
                   className="flex-1 py-2.5 rounded-xl justify-center text-sm font-bold text-navy border border-navy/20 active:bg-navy/5">
                   Close room
                 </button>
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* The placed walls do not meet the start corner. Name the gap and let the tech decide:
+          go back and fix the wrong measurement, or close anyway (the closing wall becomes
+          whatever length reaches the start, so one number will not match what was typed). */}
+      {confirmClose && (
+        <div className="fixed inset-0 z-[70] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12vh)' }}>
+          <div className="absolute inset-0 bg-navy/40" onClick={() => setConfirmClose(false)} />
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0"><TriangleAlert size={18} /></div>
+              <div className="font-display font-bold text-lg text-navy">The walls don{'\u2019'}t quite meet</div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+              The last corner is <span className="font-bold text-amber-700">{formatFeetInches(closeGapFt)}</span> from where the room started, so the lengths you typed do not close the shape. That usually means one wall was measured wrong.
+            </p>
+            <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+              Close it anyway and the last wall is stretched to reach the start, so its length will not match what you typed. Or go back and fix the measurement.
+            </p>
+            <button onClick={() => commitRoom(buildCorners)}
+              className="w-full py-3 mt-4 rounded-xl font-bold text-amber-700 border border-amber-300 active:bg-amber-50">
+              Close anyway ({formatFeetInches(closeGapFt)} off)
+            </button>
+            <button onClick={() => setConfirmClose(false)}
+              className="btn-primary w-full py-3 justify-center mt-2">
+              Go back and fix it
+            </button>
+          </div>
         </div>
       )}
 
@@ -1478,7 +1516,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
         {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, or an OPENING to edit it.')}
         {tool === 'room' && (roomMode === 'custom'
-          ? (build ? (aim ? 'Drag the orange dot to aim the wall any direction. Its length stays fixed. Set corner to plant it.' : 'Add wall, type its length, then aim it. Close the room by aiming back onto the start corner.') : 'Tap the map to drop the first corner. Then each wall is a fixed length you aim any direction.')
+          ? (build ? (aim ? 'Drag the orange dot to aim the wall any direction. Its length stays fixed. Bring it onto the start corner to close, or Set corner to keep going.' : 'Add wall, type its length, then aim it. Close the room by aiming the last wall back onto the start corner.') : 'Tap the map to drop the first corner. Then each wall is a fixed length you aim any direction.')
           : 'Type the width and length and the room draws itself exactly.')}
         {tool === 'wet' && (activeWetId ? 'Keep painting the wet spot, then tap Done. Two fingers to pan.' : 'Paint over the wet spots. Lift and paint more; tap Done to finish.')}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
