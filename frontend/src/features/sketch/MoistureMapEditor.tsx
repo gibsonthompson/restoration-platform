@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass, Scissors } from 'lucide-react';
+import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass, Scissors, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import { RoomDimensions } from './RoomDimensions';
@@ -11,14 +11,14 @@ import {
   type FloodCut,
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
   sceneFloorSqFt, suggestEquipment, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, edgeLenFt, floodCutEnds, projectToEdgeFt,
-  setEdgeLengthFt, polyEdgeLenFt, roomDimensions, roomBBoxFt, openingHeightFt,
+  setEdgeLengthFt, polyEdgeLenFt, roomDimensions, roomBBoxFt, polygonArea,
   FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, OPENING_DEFAULT_HEIGHT_FT, OPENING_LABEL, OPENING_DESC, SCENE_SIZE, UNITS_PER_FT, EQUIP_META,
   type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
-type RoomMode = 'rect' | 'poly';
-type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'rect' | 'wet' | 'place' | 'arrow' | 'polyTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle' | 'floodMove';
+type RoomMode = 'rect' | 'custom';
+type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'wet' | 'place' | 'arrow' | 'startTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle' | 'floodMove';
 interface SketchRow { id: string; canvas_json: any; }
 
 // An opening being measured. It is NOT in the scene yet, and that is the point.
@@ -36,10 +36,17 @@ interface OpeningDraft {
   id?: string;   // set when RE-MEASURING an opening that is already on the wall
 }
 
+// ---- WALL BY WALL ROOM BUILDER -------------------------------------------
+// A custom room is no longer drawn. It is BUILT: drop the first corner, then pick a
+// direction and type that wall's length, over and over. Every wall starts exactly where
+// the last one ended, so the corners are joined by construction and can never leave a
+// gap. corners[0] is the starting corner; corners.length - 1 is the number of walls
+// placed so far.
+interface RoomBuild { corners: Pt[]; }
+
 const PLACE_SET: Tool[] = ['equip', 'reading', 'origin'];
 const GRID = 40;            // scene units per grid square (1 ft)
-const INCH = UNITS_PER_FT / 12;   // 1 inch in scene units. Drawing now snaps to the INCH,
-                                  // not the foot, and a TYPED value always beats the snap.
+const INCH = UNITS_PER_FT / 12;   // 1 inch in scene units.
 const clampK = (k: number) => Math.min(20, Math.max(0.05, k));
 const OFF = 50;
 function distToSeg(p: Pt, a: Pt, b: Pt): number {
@@ -54,6 +61,24 @@ const ftLabel = (u: number) => formatFeetInches(u / UNITS_PER_FT);
 const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Undated';
 
 const OPENING_KINDS: OpeningKind[] = ['door', 'window', 'opening', 'missing_wall'];
+
+// The four directions, as they look ON SCREEN. Up is up on the tech's phone.
+type DirKey = 'up' | 'right' | 'down' | 'left';
+const DIR_KEYS: DirKey[] = ['up', 'right', 'down', 'left'];
+const DIR_SCREEN: Record<DirKey, Pt> = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
+const DIR_ICON: Record<DirKey, any> = { up: ArrowUp, right: ArrowRight, down: ArrowDown, left: ArrowLeft };
+
+// Turn a screen direction into a scene direction, so the arrows still mean what they
+// look like after the plan has been rotated to face the way the tech is standing.
+function sceneDir(key: DirKey, rot: number): Pt {
+  const [x, y] = DIR_SCREEN[key];
+  const a = (-rot * Math.PI) / 180;
+  const c = Math.cos(a), s = Math.sin(a);
+  const vx = x * c - y * s, vy = x * s + y * c;
+  const z = (n: number) => (Math.abs(n) < 1e-9 ? 0 : n);
+  return [z(vx), z(vy)];
+}
+const sameDir = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
 
 // ---- SPLITTING ONE POLYGON OUT INTO ITS OWN ROOM -------------------------
 // A closet drawn as a second wall polygon in this sketch is invisible to the report and
@@ -163,10 +188,11 @@ function PlaceGlyph({ kind, size = 26 }: { kind: string; size?: number }) {
 
 // Moisture-map editor.
 //
-// MEASUREMENTS ARE NOW TYPED, NOT DRAGGED. That was the missing half of this tool:
-// every dimension could only be set by dragging, and you cannot drag 12 ft 7 in with a
-// fingertip. Now you draw the shape, then tap any wall and type its exact length. The
-// snap is 1 INCH, and a typed value always beats the snap.
+// ROOMS ARE MEASURED, NOT DRAWN. Dragging a box with a fingertip and correcting it
+// afterwards is how a room ends up 11 ft 11 in because nobody went back to fix it. A
+// rectangle is typed: width and length. A custom shape is built wall by wall: drop the
+// first corner, then pick a direction and type that wall's length, and every wall starts
+// where the last one ended so the corners are joined by construction.
 //
 // Ceiling height and opening heights are CAPTURED, not guessed, because wall area is
 //   W = (perimeter x ceiling height) - SUM(opening width x opening height)
@@ -196,13 +222,17 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<VView>({ tx: 0, ty: 0, k: 1, rot: 0 });
-  const [draft, setDraft] = useState<{ kind: 'rect'; a: Pt; b: Pt } | { kind: 'wet'; pts: Pt[] } | { kind: 'arrow'; from: Pt; to: Pt } | { kind: 'poly'; pts: Pt[] } | null>(null);
+  const [draft, setDraft] = useState<{ kind: 'wet'; pts: Pt[] } | { kind: 'arrow'; from: Pt; to: Pt } | null>(null);
   const [active, setActive] = useState<{ scene: Pt; px: Pt } | null>(null);
   const [guide, setGuide] = useState<{ x?: number; y?: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [paletteGhost, setPaletteGhost] = useState<{ kind: string; x: number; y: number; over: boolean } | null>(null);
 
-  // ---- MEASUREMENT STATE (the part that did not exist) ----
+  // ---- WALL BY WALL BUILDER STATE ----
+  const [build, setBuild] = useState<RoomBuild | null>(null);
+  const [dirPick, setDirPick] = useState<DirKey | null>(null);   // direction chosen, waiting on a length
+
+  // ---- MEASUREMENT STATE ----
   const [ceilingFt, setCeilingFt] = useState<number | null>(null);
   const [structureCeilingFt, setStructureCeilingFt] = useState<number | null>(null);
   const [selEdge, setSelEdge] = useState<{ wallId: string; edge: number } | null>(null);
@@ -280,7 +310,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // never touched the moment the canvas is turned.
   function pxToScene(p: Pt): Pt { return screenToScene(p, viewRef.current, size.w, size.h); }
 
-  // Snap to the INCH now, not the foot. A typed value still overrides it exactly.
+  // Snap to the INCH, and to any existing corner. A typed value always overrides it.
   function snapPoint(raw: Pt, exclude?: { id: string; idx: number }): { p: Pt; gx?: number; gy?: number } {
     const thr = 8 / viewRef.current.k;
     let best: Pt | null = null, bd = thr;
@@ -323,7 +353,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   function snapshot() { setHistory(h => [...h.slice(-29), scene]); setDirty(true); }
   function undo() { setHistory(h => { if (!h.length) return h; setScene(h[h.length - 1]); setSelectedId(null); setSelEdge(null); return h.slice(0, -1); }); }
 
-  // Is this point inside a room already on the map? This is what stops a room being drawn
+  // Is this point inside a room already on the map? This is what stops a room being placed
   // inside another room: hitWall is a point-in-polygon test against every wall outline.
   const pointInAnyRoom = (p: Pt) => !!hitWall(scene, p[0], p[1]);
   // Open the editor for an opening already on a wall. Tapping a door, window, opening, or
@@ -356,7 +386,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       const [a, b] = [...pointers.current.values()];
       const pa = toPixel(a.x, a.y), pb = toPixel(b.x, b.y);
       pinch.current = { dist: Math.hypot(pa[0] - pb[0], pa[1] - pb[1]), cx: (pa[0] + pb[0]) / 2, cy: (pa[1] + pb[1]) / 2 };
-      g.current.kind = 'idle'; if (draft?.kind !== 'poly') setDraft(null); setActive(null); setGuide(null);
+      g.current.kind = 'idle'; setDraft(null); setActive(null); setGuide(null);
       return;
     }
     const px = toPixel(e.clientX, e.clientY); const s = pxToScene(px);
@@ -384,11 +414,11 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         }
       }
     } else if (tool === 'room') {
-      // Poly pans on down (a corner is added on tap), so it is guarded at the tap instead.
-      // A rectangle starts its draft here, so silently refuse if it would begin inside a room.
-      if (roomMode === 'poly') { g.current.kind = 'pan'; }
-      else if (pointInAnyRoom(s)) { g.current.kind = 'pan'; }
-      else { const { p } = snapPoint(s); g.current.kind = 'rect'; setDraft({ kind: 'rect', a: p, b: p }); showActive(s, px); }
+      // NOTHING IS DRAWN BY DRAGGING ANY MORE. A rectangle is typed. A custom room only
+      // takes ONE tap: the starting corner. After that the canvas just pans, and the walls
+      // come from the direction pad and a typed length.
+      if (roomMode === 'custom' && !build) { g.current.kind = 'startTap'; }
+      else { g.current.kind = 'pan'; }
     } else if (tool === 'wet') {
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] }); setActive({ scene: s, px }); setGuide(null);
     } else if (tool === 'arrow') {
@@ -436,7 +466,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const gb = g.current.grab;
 
     if (g.current.kind === 'pan') { const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); }
-    else if (g.current.kind === 'rect') { const p = showActive(pxToScene(px), px); setDraft(d => (d && d.kind === 'rect' ? { ...d, b: p } : d)); }
     else if (g.current.kind === 'arrow') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'arrow' ? { ...d, to: p } : d)); }
     else if (g.current.kind === 'handle' && g.current.id != null) {
       const t: Pt = gb ? [sO[0] + gb[0], sO[1] + gb[1]] : sO;
@@ -461,8 +490,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         return { ...d, pts: [...d.pts, fp] };
       });
     }
-    else if (g.current.kind === 'polyTap') { if (g.current.moved) { g.current.kind = 'pan'; const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); } else { showActive(sO, pxO); } }
-    else if (g.current.kind === 'floodTap' || g.current.kind === 'containTap') { if (g.current.moved) { g.current.kind = 'pan'; const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); } }
+    else if (g.current.kind === 'startTap' || g.current.kind === 'floodTap' || g.current.kind === 'containTap') { if (g.current.moved) { g.current.kind = 'pan'; const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); } }
     else if (g.current.kind === 'floodHandle' && selectedFlood) {
       showActive(sO, pxO);
       const fc = (scene.floodCuts ?? []).find(f => f.wallId === selectedFlood.wallId && f.edge === selectedFlood.edge);
@@ -498,15 +526,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     }
     if (pointers.current.size > 0) return;
 
-    if (g.current.kind === 'rect' && draft?.kind === 'rect') {
-      const { a, b } = draft;
-      if (Math.abs(b[0] - a[0]) >= INCH * 6 && Math.abs(b[1] - a[1]) >= INCH * 6) {
-        snapshot();
-        const pts: Pt[] = [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]];
-        setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
-      }
-      setDraft(null);
-    } else if (g.current.kind === 'wet' && draft?.kind === 'wet') {
+    if (g.current.kind === 'wet' && draft?.kind === 'wet') {
       if (g.current.moved && draft.pts.length >= 1) {
         const stroke = draft.pts;
         if (activeWetId) {
@@ -522,6 +542,11 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       const { from, to } = draft;
       if (Math.hypot(to[0] - from[0], to[1] - from[1]) >= GRID) { snapshot(); setScene(sc => ({ ...sc, arrows: [...(sc.arrows ?? []), { id: uid(), from, to }] })); }
       setDraft(null);
+    } else if (g.current.kind === 'startTap' && !g.current.moved && g.current.downScene) {
+      // THE ONE TAP a custom room takes: where its first corner goes. It snaps to the inch
+      // and to any corner already on the map, so two rooms meet exactly.
+      const { p } = snapPoint(g.current.downScene);
+      if (!pointInAnyRoom(p)) setBuild({ corners: [p] });
     } else if (g.current.kind === 'floodTap' && !g.current.moved) {
       const fe = g.current.floodEdge;
       if (fe) {
@@ -534,17 +559,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       const pt = g.current.downScene, id = uid();
       snapshot(); setScene(sc => ({ ...sc, containments: [...(sc.containments ?? []), { id, x: pt[0], y: pt[1], widthFt: 3, heightFt: 8 }] }));
       setPendingContain({ id, isNew: true });
-    } else if (g.current.kind === 'polyTap' && !g.current.moved) {
-      const { p } = snapPoint(g.current.downScene!);
-      const d = draft;
-      const firstCorner = !(d?.kind === 'poly' && d.pts.length > 0);
-      if (firstCorner && pointInAnyRoom(p)) {
-        /* silently refuse: no room inside a room */
-      } else if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 30) {
-        snapshot(); const pts = d.pts; setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] })); setDraft(null);
-      } else {
-        setDraft(d?.kind === 'poly' ? { kind: 'poly', pts: [...d.pts, p] } : { kind: 'poly', pts: [p] });
-      }
     } else if (g.current.kind === 'pan' && !g.current.moved && g.current.openingTap) {
       // TAP AN OPENING to edit it: change its type, width, height, or remove it.
       openOpeningEditor(g.current.openingTap);
@@ -555,7 +569,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     } else if (g.current.kind === 'pan' && !g.current.moved && g.current.wallTap) {
       // The polygon is now SELECTED (set in onDown). Its action bar at the bottom offers
       // its material and, when this sketch holds more than one room outline, splitting it
-      // into its own room. No more surprise prompt on every tap inside a room.
+      // into its own room.
       setSelectedId(g.current.wallTap);
     } else if (g.current.kind === 'place' && active) {
       commitPlace(active.scene, g.current.editId);
@@ -580,12 +594,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     if (!selectedId) return; snapshot();
     setScene(sc => ({ ...sc, equipment: sc.equipment.filter(e => e.id !== selectedId), moisturePoints: (sc.moisturePoints ?? []).filter(m => m.id !== selectedId), arrows: (sc.arrows ?? []).filter(a => a.id !== selectedId), openings: (sc.openings ?? []).filter(o => o.id !== selectedId) }));
     setSelectedId(null);
-  }
-  function closePoly() {
-    if (draft?.kind !== 'poly' || draft.pts.length < 3) return;
-    snapshot(); const pts = draft.pts;
-    setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
-    setDraft(null); setActive(null); setGuide(null);
   }
   const updateFlood = (sel: { wallId: string; edge: number }, patch: Partial<FloodCut>) =>
     setScene(sc => ({ ...sc, floodCuts: (sc.floodCuts ?? []).map(f => (f.wallId === sel.wallId && f.edge === sel.edge ? { ...f, ...patch } : f)) }));
@@ -615,30 +623,73 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       return { ...sc, wetAreas: sc.wetAreas.map(x => (x.id === activeWetId ? { ...x, strokes } : x)) };
     });
   }
-  function addPolyCorner() {
-    if (!size.w) return;
-    const p = snapPoint(pxToScene([size.w / 2, size.h / 2])).p;
-    const d = draft;
-    const firstCorner = !(d?.kind === 'poly' && d.pts.length > 0);
-    if (firstCorner && pointInAnyRoom(p)) { return; }
-    if (d?.kind === 'poly' && d.pts.length >= 3 && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < 40) {
-      snapshot(); const pts = d.pts;
-      setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
-      setDraft(null);
-    } else {
-      setDraft(d?.kind === 'poly' ? { kind: 'poly', pts: [...d.pts, p] } : { kind: 'poly', pts: [p] });
+
+  // ---- WALL BY WALL --------------------------------------------------------
+  //
+  // Each wall runs from the last corner, in the direction the tech tapped, for exactly
+  // the length they typed. Nothing is estimated and nothing is dragged, so consecutive
+  // walls share a corner exactly rather than nearly.
+  const buildCorners = build?.corners ?? [];
+  const buildEnd: Pt | null = buildCorners.length ? buildCorners[buildCorners.length - 1] : null;
+  // The direction of the wall just placed, so we can stop the next one doubling back on
+  // it or running straight on (either would put a corner in the middle of a wall).
+  const lastDir: Pt | null = buildCorners.length >= 2 ? (() => {
+    const a = buildCorners[buildCorners.length - 2], b = buildCorners[buildCorners.length - 1];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [(b[0] - a[0]) / L, (b[1] - a[1]) / L] as Pt;
+  })() : null;
+  function dirAllowed(key: DirKey): boolean {
+    if (!lastDir) return true;
+    const v = sceneDir(key, view.rot);
+    return !sameDir(v, lastDir) && !sameDir(v, [-lastDir[0], -lastDir[1]]);
+  }
+  function addWall(ft: number) {
+    if (!dirPick || !buildEnd) { setDirPick(null); return; }
+    const v = sceneDir(dirPick, view.rot);
+    const end: Pt = [buildEnd[0] + v[0] * ft * UNITS_PER_FT, buildEnd[1] + v[1] * ft * UNITS_PER_FT];
+    const corners = [...buildCorners, end];
+    setDirPick(null);
+    // Walked right back onto the starting corner: that IS the room, so close it.
+    if (corners.length >= 4 && Math.hypot(end[0] - corners[0][0], end[1] - corners[0][1]) < INCH) {
+      commitRoom(corners.slice(0, -1));
+      return;
     }
+    setBuild({ corners });
   }
-  function undoPolyPoint() {
-    setDraft(d => (d?.kind === 'poly' ? (d.pts.length <= 1 ? null : { kind: 'poly', pts: d.pts.slice(0, -1) }) : d));
+  function undoWall() {
+    if (buildCorners.length <= 1) { setBuild(null); setDirPick(null); return; }
+    setBuild({ corners: buildCorners.slice(0, -1) });
+    setDirPick(null);
   }
+  // Close the shape. If the last corner does not line up with the first one, ONE extra
+  // corner is added so the two closing walls are square rather than a diagonal across
+  // the room. That is what makes "close it" always produce a real room.
+  function closingCorners(): Pt[] | null {
+    if (buildCorners.length < 3 || !buildEnd) return null;
+    const start = buildCorners[0];
+    const dx = Math.abs(buildEnd[0] - start[0]), dy = Math.abs(buildEnd[1] - start[1]);
+    if (dx < INCH / 2 || dy < INCH / 2) return buildCorners;          // already square to the start
+    const horizontalLast = lastDir ? Math.abs(lastDir[1]) < 1e-6 : true;
+    const corner: Pt = horizontalLast ? [buildEnd[0], start[1]] : [start[0], buildEnd[1]];
+    return [...buildCorners, corner];
+  }
+  function closeRoom() {
+    const pts = closingCorners();
+    if (!pts || pts.length < 3) return;
+    commitRoom(pts);
+  }
+  function commitRoom(pts: Pt[]) {
+    if (pts.length < 3 || polygonArea(pts) < UNITS_PER_FT * UNITS_PER_FT * 0.25) { setBuild(null); setDirPick(null); return; }
+    snapshot();
+    setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
+    setBuild(null); setDirPick(null);
+    selectTool('move');
+  }
+  const closePreview = build ? closingCorners() : null;
+  const buildAreaSqFt = closePreview && closePreview.length >= 3
+    ? Math.round(polygonArea(closePreview) / (UNITS_PER_FT * UNITS_PER_FT)) : 0;
 
   // TYPE THE ROOM, DO NOT DRAW IT.
-  //
-  // A tech with a laser measure has two numbers. Dragging a box with a fingertip and then
-  // correcting each wall afterwards is the long way round to the same rectangle, and it is
-  // how a room ends up 11 ft 11 in because nobody went back to fix it. Xactimate calls this
-  // "add a room using exact dimensions"; so do we.
   //
   // The rectangle lands centred on what the tech is looking at, with its ORIGIN snapped to
   // the inch rather than its size, so the width and length stay exactly what was typed.
@@ -652,13 +703,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     snapshot();
     setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
     setSizeSheet(false);
-    setDraft(null);
     selectTool('move');
   }
 
   // Placing an opening OPENS THE MEASUREMENT SHEET. It does not write anything yet.
-  // The old order (write with defaults, then ask) meant a cancelled sheet left a door
-  // on the wall with an invented height that openingHeightFt reported as measured.
   function commitPlace(p: Pt, editId?: string) {
     if (tool === 'origin') {
       snapshot();
@@ -692,11 +740,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   // The opening only enters the scene once its numbers are real. heightFt stays undefined
   // for a missing wall, which is correct: openingHeightFt gives it the FULL ceiling height
   // by definition, and calls it measured rather than assumed.
-  //
-  // With an id, this RE-MEASURES an opening already on the wall instead of adding another.
-  //
-  // t is clamped against the FINAL width in both paths. Clamping against the old width and
-  // then widening the opening to 3 ft could push it past the end of its own wall.
   function commitOpening(d: OpeningDraft, heightFt?: number) {
     snapshot();
     setScene(sc => {
@@ -768,9 +811,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     else { const [pdx, pdy] = panDelta([-e.deltaX, -e.deltaY], v); setView({ ...v, tx: v.tx + pdx, ty: v.ty + pdy }); }
   }
 
-  // Saving now writes the room's real DIMENSIONS back to resto_rooms. Without this,
-  // length_ft and width_ft stay null forever and every screen that reads them shows
-  // "0 x 0", which is exactly the bug this fixes.
+  // Saving writes the room's real DIMENSIONS back to resto_rooms.
   async function save() {
     setSaving(true);
     try {
@@ -795,15 +836,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     for (let x = Math.floor(vMinX / GRID) * GRID; x <= vMaxX; x += GRID) gxs.push(x);
     for (let y = Math.floor(vMinY / GRID) * GRID; y <= vMaxY; y += GRID) gys.push(y);
   }
-  const isCustom = tool === 'room' && roomMode === 'poly';
-  const chScene = isCustom && size.w ? snapPoint(pxToScene([size.w / 2, size.h / 2])).p : null;
-  const rectDraft = draft?.kind === 'rect' ? draft : null;
-  const rx = rectDraft ? Math.min(rectDraft.a[0], rectDraft.b[0]) : 0, ry = rectDraft ? Math.min(rectDraft.a[1], rectDraft.b[1]) : 0;
-  const rw = rectDraft ? Math.abs(rectDraft.b[0] - rectDraft.a[0]) : 0, rh = rectDraft ? Math.abs(rectDraft.b[1] - rectDraft.a[1]) : 0;
-  const polyDraft = draft?.kind === 'poly' ? draft : null;
-  const drawReadout = rectDraft
-    ? `${ftLabel(rw)} \u00d7 ${ftLabel(rh)} \u00b7 ${Math.round((rw * rh) / (UNITS_PER_FT * UNITS_PER_FT))} sq ft`
-    : polyDraft ? `${polyDraft.pts.length} corner${polyDraft.pts.length === 1 ? '' : 's'}${polyDraft.pts.length >= 3 ? ' \u00b7 aim at the first corner to close' : ''}` : null;
+  const isCustom = tool === 'room' && roomMode === 'custom';
+  const drawReadout = build
+    ? (buildCorners.length === 1
+      ? 'Pick a direction, then type that wall\u2019s length'
+      : `${buildCorners.length - 1} wall${buildCorners.length === 2 ? '' : 's'}${buildAreaSqFt > 0 ? ` \u00b7 about ${buildAreaSqFt} sq ft closed` : ''}`)
+    : null;
   const fingerScene = active && tool !== 'room' && tool !== 'wet' ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
     am: scene.equipment.filter(e => e.type === 'air_mover').length,
@@ -845,7 +883,8 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const activeRoomKey = tool === 'door' ? doorKind : tool === 'room' ? roomMode : '';
   function pickRoom(key: string) {
     setLastRoomKey(key);
-    if (key === 'rect' || key === 'poly') { setRoomMode(key as RoomMode); selectTool('room'); }
+    if (key === 'rect') { setRoomMode('rect'); selectTool('room'); setBuild(null); setDirPick(null); setSizeSheet(true); }
+    else if (key === 'custom') { setRoomMode('custom'); selectTool('room'); }
     else { setDoorKind(key as OpeningKind); selectTool('door'); }
   }
 
@@ -858,14 +897,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   })() : null;
 
-  // An opening already on the wall, selected in Move mode. Mis-measuring a door is normal,
-  // and the fix should not be "delete it and drag a new one onto the right wall again".
+  // An opening already on the wall, selected in Move mode.
   const selOpen = selectedId ? (scene.openings ?? []).find(o => o.id === selectedId) ?? null : null;
   // A whole room outline selected by tapping inside it (not an edge, not an opening).
   const selWall = selectedId ? scene.walls.find(w => w.id === selectedId) ?? null : null;
 
-  // Tag a room outline's material. Was a prompt fired on every interior tap; now it is a
-  // deliberate button on the selected outline.
+  // Tag a room outline's material.
   function setMaterial(wallId: string) {
     const cur = scene.walls.find(w => w.id === wallId);
     const mat = prompt('Material for this area (e.g. Drywall, Carpet, Subfloor)', cur?.material ?? '');
@@ -874,8 +911,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
 
   // Promote one wall polygon (the closet) into its own resto_rooms row with its own sketch,
   // and remove it from this one. New room + sketch are created FIRST, so a failure never
-  // strips the closet out of this map with nowhere for it to go. The remainder is written
-  // back here, and both rooms get their width/length refreshed since both shapes changed.
+  // strips the closet out of this map with nowhere for it to go.
   async function splitOutRoom(wallId: string, rawName: string) {
     const sid = resolvedStructureId;
     if (!sid) { alert('Could not find the structure for this room, so the closet cannot be split out. Open the room from the structure and try again.'); return; }
@@ -915,7 +951,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         if (iErr) throw new Error(`"${name}" was created, but saving this map failed: ${iErr.message}.`);
       }
 
-      // This room shrank, so refresh its own dimensions. Best effort: the split already stuck.
       const rb = roomBBoxFt(parts.remain);
       if (rb.widthFt > 0 && rb.lengthFt > 0) {
         await supabase.from('resto_rooms')
@@ -948,31 +983,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       </g>
       {guide?.x != null && <line x1={guide.x} y1={vMinY} x2={guide.x} y2={vMaxY} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
       {guide?.y != null && <line x1={vMinX} y1={guide.y} x2={vMaxX} y2={guide.y} stroke="#F26B3A" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="5 4" />}
-      {rectDraft && (
-        <>
-          <rect x={rx} y={ry} width={rw} height={rh} fill="#0E2A4D" fillOpacity={0.05} stroke="#1483C2" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeDasharray="6 4" />
-          <circle cx={rectDraft.a[0]} cy={rectDraft.a[1]} r={9 / k} fill="#1483C2" stroke="#fff" strokeWidth={2.5 / k} />
-          {rw > 0 && (
-            <text x={rx + rw / 2} y={ry - 26 / k} textAnchor="middle" fontSize={13 / k} fontWeight={800} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke">{ftLabel(rw)}</text>
-          )}
-          {rh > 0 && (
-            <text x={rx - 26 / k} y={ry + rh / 2} textAnchor="middle" fontSize={13 / k} fontWeight={800} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke" transform={`rotate(-90 ${rx - 26 / k} ${ry + rh / 2})`}>{ftLabel(rh)}</text>
-          )}
-        </>
-      )}
-      {polyDraft && (
-        <g>
-          <polyline points={ptsStr(polyDraft.pts)} fill="none" stroke="#1483C2" strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeDasharray="7 5" />
-          {polyDraft.pts.slice(1).map((pt, i) => {
-            const a = polyDraft.pts[i]; const mid: Pt = [(a[0] + pt[0]) / 2, (a[1] + pt[1]) / 2];
-            const len = Math.hypot(pt[0] - a[0], pt[1] - a[1]);
-            return <text key={i} x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={12 / k} fontWeight={700} fill="#0E2A4D" stroke="#fff" strokeWidth={4 / k} paintOrder="stroke">{ftLabel(len)}</text>;
-          })}
-          {polyDraft.pts.map((pt, i) => (
-            <circle key={i} cx={pt[0]} cy={pt[1]} r={(i === 0 ? 9 : 6) / k} fill={i === 0 ? '#1483C2' : '#fff'} stroke="#1483C2" strokeWidth={2.5 / k} />
-          ))}
-        </g>
-      )}
+
       {draft?.kind === 'arrow' && (() => {
         const [x1, y1] = draft.from, [x2, y2] = draft.to;
         const ang = Math.atan2(y2 - y1, x2 - x1), hl = 34, hw = 15;
@@ -986,9 +997,41 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       })()}
       <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} rot={view.rot} />
 
-      {/* EVERY WALL SHOWS ITS EXACT LENGTH, in every tool, so a tech reads each wall without
-          switching to Move. The ruler button hides them when the canvas is busy; tapping a
-          wall in Move still selects it to type the real number. */}
+      {/* THE ROOM BEING BUILT: the walls placed so far, each labelled with the length that
+          was typed, plus a dashed preview of how it would close. */}
+      {build && (
+        <g style={{ pointerEvents: 'none' }}>
+          {closePreview && closePreview.length >= 3 && (
+            <polygon points={ptsStr(closePreview)} fill="#1483C2" fillOpacity={0.07} stroke="none" />
+          )}
+          {closePreview && closePreview.length >= 3 && (
+            <polyline points={ptsStr([closePreview[closePreview.length - 1], closePreview[0]])}
+                      fill="none" stroke="#1483C2" strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeDasharray="7 6" opacity={0.65} />
+          )}
+          {closePreview && closePreview.length > buildCorners.length && (
+            <polyline points={ptsStr([buildCorners[buildCorners.length - 1], closePreview[closePreview.length - 1]])}
+                      fill="none" stroke="#1483C2" strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeDasharray="7 6" opacity={0.65} />
+          )}
+          <polyline points={ptsStr(buildCorners)} fill="none" stroke="#1483C2" strokeWidth={4} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+          {buildCorners.slice(1).map((pt, i) => {
+            const a = buildCorners[i];
+            const mid: Pt = [(a[0] + pt[0]) / 2, (a[1] + pt[1]) / 2];
+            const len = Math.hypot(pt[0] - a[0], pt[1] - a[1]);
+            return (
+              <text key={'bl' + i} x={mid[0]} y={mid[1]}
+                    transform={view.rot ? `rotate(${-view.rot} ${mid[0]} ${mid[1]})` : undefined}
+                    textAnchor="middle" dominantBaseline="central" fontSize={13 / k} fontWeight={800}
+                    fill="#0E2A4D" stroke="#fff" strokeWidth={4.5 / k} paintOrder="stroke">{ftLabel(len)}</text>
+            );
+          })}
+          {buildCorners.map((pt, i) => (
+            <circle key={'bc' + i} cx={pt[0]} cy={pt[1]} r={(i === 0 ? 9 : 6) / k}
+                    fill={i === 0 ? '#1483C2' : '#fff'} stroke="#1483C2" strokeWidth={2.5 / k} />
+          ))}
+        </g>
+      )}
+
+      {/* EVERY WALL SHOWS ITS EXACT LENGTH, in every tool. */}
       {showWalls && scene.walls.map(w => w.points.map((_pt, ei) => {
         const n = w.points.length;
         const a = w.points[ei], b = w.points[(ei + 1) % n];
@@ -1010,8 +1053,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       }))}
 
       {/* OPENINGS SHOW THEIR SIZE, off the wall line so they do not collide with the wall
-          length. This is the door / window / opening measurement, right on the map. An
-          opening still missing a height reads amber with "h?" so it gets measured. */}
+          length. An opening still missing a height reads amber with "h?" so it gets measured. */}
       {showWalls && (scene.openings ?? []).map(o => {
         const w = scene.walls.find(x => x.id === o.wallId);
         if (!w) return null;
@@ -1120,8 +1162,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         <button onClick={save} disabled={saving} className="ml-1 btn-primary py-2 px-4 text-sm disabled:opacity-50"><Save size={16} /> Save</button>
       </div>
 
-      {/* MEASUREMENTS: the numbers that pay for the job. This is the most important
-          thing on the screen, so it is a full-width button, not an icon in a toolbar. */}
+      {/* MEASUREMENTS: the numbers that pay for the job. */}
       <button onClick={() => setShowDims(true)}
         className="flex items-center gap-3 px-3 py-2.5 bg-white border-b border-gray-100 active:bg-gray-50 text-left w-full">
         <div className="w-9 h-9 rounded-xl bg-sky-soft text-sky-deep flex items-center justify-center shrink-0"><Ruler size={17} /></div>
@@ -1130,7 +1171,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           <div className="text-[11px] text-gray-500 leading-snug tabular-nums truncate">
             {dims.F > 0
               ? <>Floor {dims.F} sq ft &middot; Walls {dims.W} sq ft &middot; Baseboard {dims.baseboardLF} ft</>
-              : 'Draw the room to see its measurements'}
+              : 'Add the room to see its measurements'}
           </div>
         </div>
         {(!ceilingFt || dims.openings.some(o => o.assumedHeight)) && (
@@ -1190,34 +1231,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           <rect x={0} y={0} width={size.w} height={size.h} fill="#F4F7FB" />
           <g transform={viewTransform(view, size.w, size.h)}>
             {content}
-            {isCustom && chScene && (
-              <g style={{ pointerEvents: 'none' }}>
-                {polyDraft && polyDraft.pts.length > 0 && (() => {
-                  const last = polyDraft.pts[polyDraft.pts.length - 1];
-                  const mid: Pt = [(last[0] + chScene[0]) / 2, (last[1] + chScene[1]) / 2];
-                  const len = Math.hypot(chScene[0] - last[0], chScene[1] - last[1]);
-                  return (
-                    <>
-                      <line x1={last[0]} y1={last[1]} x2={chScene[0]} y2={chScene[1]} stroke="#1483C2" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeDasharray="6 5" opacity={0.7} />
-                      {len > 4 && <text x={mid[0]} y={mid[1]} textAnchor="middle" dominantBaseline="central" fontSize={13 / k} fontWeight={800} fill="#1483C2" stroke="#fff" strokeWidth={4.5 / k} paintOrder="stroke">{ftLabel(len)}</text>}
-                    </>
-                  );
-                })()}
-                <circle cx={chScene[0]} cy={chScene[1]} r={6 / k} fill="#1483C2" fillOpacity={0.35} stroke="#1483C2" strokeWidth={2 / k} />
-              </g>
-            )}
             {tool === 'move' && scene.walls.flatMap(w => w.points.map((pt, i) => (
               <circle key={w.id + '-' + i} cx={pt[0]} cy={pt[1]} r={7 / k} fill="#fff" stroke="#0E2A4D" strokeWidth={2 / k} />
             )))}
           </g>
-
-          {isCustom && (
-            <g style={{ pointerEvents: 'none' }}>
-              <line x1={(size.w || 1) / 2 - 15} y1={(size.h || 1) / 2} x2={(size.w || 1) / 2 + 15} y2={(size.h || 1) / 2} stroke="#1483C2" strokeWidth={2} />
-              <line x1={(size.w || 1) / 2} y1={(size.h || 1) / 2 - 15} x2={(size.w || 1) / 2} y2={(size.h || 1) / 2 + 15} stroke="#1483C2" strokeWidth={2} />
-              <circle cx={(size.w || 1) / 2} cy={(size.h || 1) / 2} r={11} fill="none" stroke="#1483C2" strokeWidth={2} />
-            </g>
-          )}
         </svg>
 
         {drawReadout && (
@@ -1227,12 +1244,9 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         )}
 
         <div className="absolute right-3 bottom-3 flex flex-col gap-2">
-          {/* Show or hide measurements on the sketch: every wall length AND every opening
-              size. On by default; turn it off when the canvas is busy. */}
           <button onClick={() => setShowWalls(v => !v)} aria-label="Show measurements"
             className={`rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 ${showWalls ? 'bg-navy text-white' : 'bg-white text-navy'}`}><Ruler size={18} /></button>
-          {/* Turn the plan to face the way you are standing. Tap to rotate, hold-free
-              double tap on the compass to snap back to north. */}
+          {/* Turn the plan to face the way you are standing. The direction pad turns with it. */}
           <button onClick={() => setView(v => ({ ...v, rot: normRot(v.rot + 90) }))}
             className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95 text-navy"><RotateCw size={18} /></button>
           {view.rot !== 0 && (
@@ -1245,7 +1259,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           <button onClick={() => zoomBy(0.8)} className="bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-soft active:scale-95"><Minus size={18} /></button>
         </div>
 
-        {/* TAP A WALL, TYPE ITS EXACT LENGTH. This is the missing input. */}
+        {/* TAP A WALL, TYPE ITS EXACT LENGTH. */}
         {tool === 'move' && selEdge && selEdgeMid && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
             <button onClick={() => setEdgeSheet({ wallId: selEdge.wallId, edge: selEdge.edge, currentFt: selEdgeLenFt })}
@@ -1267,8 +1281,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             </button>
           </div>
         )}
-        {/* A whole room outline is selected: tag its material, or, when this sketch holds
-            more than one outline, split it into its own room. */}
         {tool === 'move' && !selEdge && !selOpen && selWall && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
             <button onClick={() => setMaterial(selWall.id)}
@@ -1296,22 +1308,55 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
             <button onClick={() => setSizeSheet(true)}
               className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-6 py-3 text-sm font-extrabold shadow-lg active:scale-95 flex items-center gap-2">
-              <Ruler size={16} /> Type exact size
+              <Ruler size={16} /> Type width and length
             </button>
           </div>
         )}
-        {isCustom && (
-          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center gap-2 px-3">
-            {polyDraft && polyDraft.pts.length > 0 && (
-              <button onClick={undoPolyPoint} className="bg-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft active:scale-95">Undo</button>
-            )}
-            <button onClick={addPolyCorner} className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-6 py-3 text-sm font-extrabold shadow-lg active:scale-95">+ Add corner</button>
-            {polyDraft && polyDraft.pts.length >= 3 && (
-              <button onClick={closePoly} className="bg-navy text-white rounded-full px-4 py-2.5 text-sm font-bold shadow-soft active:scale-95">Close</button>
-            )}
+        {isCustom && !build && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
+            <div className="bg-navy/90 text-white rounded-full px-5 py-3 text-sm font-bold shadow-lg">
+              Tap where the first corner goes
+            </div>
           </div>
         )}
       </div>
+
+      {/* ---- THE DIRECTION PAD: pick a way, type a length, the wall is placed ---- */}
+      {isCustom && build && (
+        <div className="bg-white border-t border-gray-100 px-3 pt-2 pb-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+              Wall {buildCorners.length}
+            </span>
+            <span className="text-[11px] font-semibold text-gray-500">
+              {buildCorners.length === 1 ? 'Which way does it run?' : 'Which way does the next wall turn?'}
+            </span>
+          </div>
+          <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+            {DIR_KEYS.map(dk => {
+              const Icon = DIR_ICON[dk];
+              const ok = dirAllowed(dk);
+              return (
+                <button key={dk} disabled={!ok} onClick={() => setDirPick(dk)}
+                  className={`flex flex-col items-center gap-0.5 py-2 rounded-2xl font-bold ${ok ? 'bg-sky-soft text-sky-deep active:bg-sky/20' : 'bg-gray-50 text-gray-300'}`}>
+                  <Icon size={20} strokeWidth={2.6} />
+                  <span className="text-[10px] capitalize">{dk}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button onClick={undoWall}
+              className="flex-1 border border-gray-200 rounded-xl py-2.5 text-sm font-bold text-gray-600 active:bg-gray-50">
+              {buildCorners.length <= 1 ? 'Cancel' : 'Undo wall'}
+            </button>
+            <button onClick={closeRoom} disabled={buildCorners.length < 3}
+              className="btn-primary flex-1 py-2.5 justify-center text-sm disabled:opacity-40">
+              Close room
+            </button>
+          </div>
+        </div>
+      )}
 
       {isScope && (
         <div className="bg-white border-t border-gray-100">
@@ -1330,12 +1375,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         </div>
       )}
 
-      {isRoom && (
+      {isRoom && !(isCustom && build) && (
         <div className="bg-white border-t border-gray-100">
           <div className="flex items-center gap-2 px-3 pt-2 pb-1">
             <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">Shape</span>
             <div className="flex flex-1 bg-gray-100 rounded-full p-0.5">
-              {([['rect', 'Rectangle'], ['poly', 'Custom']] as [string, string][]).map(([kk, l]) => (
+              {([['rect', 'Rectangle'], ['custom', 'Custom']] as [string, string][]).map(([kk, l]) => (
                 <button key={kk} onClick={() => pickRoom(kk)} className={`flex-1 py-1 rounded-full text-xs font-bold ${activeRoomKey === kk ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{l}</button>
               ))}
             </div>
@@ -1377,8 +1422,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, or an OPENING to edit it. Drag a corner to reshape.')}
-        {tool === 'room' && (roomMode === 'poly' ? 'Aim the crosshair at each corner, then tap Add corner. Set exact lengths after, in Move.' : 'Tap TYPE EXACT SIZE and the room draws itself. Or drag a rough box and correct each wall in Move.')}
+        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, or an OPENING to edit it.')}
+        {tool === 'room' && (roomMode === 'custom'
+          ? (build ? 'Pick the direction, type the length, and the wall joins the last one. Close room finishes it.' : 'Tap the map to drop the first corner. Then it is direction, length, repeat.')
+          : 'Type the width and length and the room draws itself exactly.')}
         {tool === 'wet' && (activeWetId ? 'Keep painting the wet spot, then tap Done. Two fingers to pan.' : 'Paint over the wet spots. Lift and paint more; tap Done to finish.')}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
         {tool === 'reading' && `Reading for ${fmtDate(activeDate)}. Press empty space for a new point, or a pin to update it.`}
@@ -1406,7 +1453,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         </button>
       </nav>
 
-      {/* ---- MEASUREMENT SHEETS (the input that did not exist) ---- */}
+      {/* ---- MEASUREMENT SHEETS ---- */}
+      {dirPick && (
+        <MeasureSheet
+          title={`Wall ${buildCorners.length} length`}
+          subtitle={`Running ${dirPick} from the last corner. The wall starts exactly where the last one ended.`}
+          initialFt={10}
+          min={0.25} max={200}
+          quick={[{ label: "8'", ft: 8 }, { label: "10'", ft: 10 }, { label: "12'", ft: 12 }]}
+          onCancel={() => setDirPick(null)}
+          onSave={addWall}
+        />
+      )}
       {edgeSheet && (
         <MeasureSheet
           title="Wall length"
@@ -1440,9 +1498,6 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         const twoStep = kind !== 'missing_wall';   // a missing wall is full ceiling height, so width only
         const maxW = Math.round(openingSheet.edgeLenFt * 100) / 100;   // never wider than its own wall
         const maxH = ceilingFt ?? 12;                                   // never taller than the wall it sits in
-        // Quick chips start from XACTIMATE'S OWN DEFAULTS (door 2'6" x 6'8", window
-        // 2'8" x 4'0", decoded from the reference file), so a tech confirms a number
-        // rather than correcting one. Anything that will not fit is filtered out.
         const widthQuick = (kind === 'door' ? [{ label: "2' 6\"", ft: 2.5 }, { label: "2' 8\"", ft: 2 + 8 / 12 }, { label: "3'", ft: 3 }]
           : kind === 'window' ? [{ label: "2' 8\"", ft: 2 + 8 / 12 }, { label: "3'", ft: 3 }, { label: "4'", ft: 4 }]
           : [{ label: "3'", ft: 3 }, { label: "4'", ft: 4 }, { label: "6'", ft: 6 }]).filter(q => q.ft <= maxW);
@@ -1614,7 +1669,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         );
       })()}
 
-      {/* The closet is now its own room. Confirm it and stay put; this map shows the rest. */}
+      {/* The closet is now its own room. */}
       {splitDone && (
         <div className="fixed inset-0 z-[75] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12vh)' }}>
           <div className="absolute inset-0 bg-navy/40" onClick={() => setSplitDone(null)} />
@@ -1628,8 +1683,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         </div>
       )}
 
-      {/* EDIT AN OPENING already on a wall: change its type, width, height, or remove it.
-          Opens when a door / window / opening / missing wall is tapped. */}
+      {/* EDIT AN OPENING already on a wall. */}
       {editOpen && (() => {
         const o = (scene.openings ?? []).find(x => x.id === editOpen);
         if (!o) return null;
