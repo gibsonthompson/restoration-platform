@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass, Scissors, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
+import { X, Undo2, Save, Move, Square, Droplet, Plus, Minus, Trash2, MapPin, Ruler, ArrowUpDown, TriangleAlert, RotateCw, Compass, Scissors } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { SceneLayers, EquipIcon } from './SceneLayers';
 import { RoomDimensions } from './RoomDimensions';
@@ -18,7 +18,7 @@ import {
 
 type Tool = 'move' | 'room' | 'wet' | 'equip' | 'reading' | 'arrow' | 'door' | 'floodcut' | 'containment' | 'origin';
 type RoomMode = 'rect' | 'custom';
-type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'wet' | 'place' | 'arrow' | 'startTap' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle' | 'floodMove';
+type GKind = 'idle' | 'pan' | 'dragEquip' | 'dragPoint' | 'handle' | 'wet' | 'place' | 'arrow' | 'startTap' | 'aimRotate' | 'containDraw' | 'floodTap' | 'containTap' | 'floodHandle' | 'floodMove';
 interface SketchRow { id: string; canvas_json: any; }
 
 // An opening being measured. It is NOT in the scene yet, and that is the point.
@@ -62,23 +62,9 @@ const fmtDate = (d: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString(
 
 const OPENING_KINDS: OpeningKind[] = ['door', 'window', 'opening', 'missing_wall'];
 
-// The four directions, as they look ON SCREEN. Up is up on the tech's phone.
-type DirKey = 'up' | 'right' | 'down' | 'left';
-const DIR_KEYS: DirKey[] = ['up', 'right', 'down', 'left'];
-const DIR_SCREEN: Record<DirKey, Pt> = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
-const DIR_ICON: Record<DirKey, any> = { up: ArrowUp, right: ArrowRight, down: ArrowDown, left: ArrowLeft };
-
-// Turn a screen direction into a scene direction, so the arrows still mean what they
-// look like after the plan has been rotated to face the way the tech is standing.
-function sceneDir(key: DirKey, rot: number): Pt {
-  const [x, y] = DIR_SCREEN[key];
-  const a = (-rot * Math.PI) / 180;
-  const c = Math.cos(a), s = Math.sin(a);
-  const vx = x * c - y * s, vy = x * s + y * c;
-  const z = (n: number) => (Math.abs(n) < 1e-9 ? 0 : n);
-  return [z(vx), z(vy)];
-}
-const sameDir = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+// A wall being aimed: a locked length pinned to the previous corner, its free end swung to
+// any angle at all. The length only changes when the tech retypes it, never by dragging.
+interface AimWall { lenU: number; angle: number; }   // angle in radians, scene space (0 = +x)
 
 // ---- SPLITTING ONE POLYGON OUT INTO ITS OWN ROOM -------------------------
 // A closet drawn as a second wall polygon in this sketch is invisible to the report and
@@ -228,9 +214,13 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const [saving, setSaving] = useState(false);
   const [paletteGhost, setPaletteGhost] = useState<{ kind: string; x: number; y: number; over: boolean } | null>(null);
 
-  // ---- WALL BY WALL BUILDER STATE ----
+  // ---- CUSTOM ROOM BUILDER STATE ----
+  // corners: the joints placed so far, starting corner first, all visible.
+  // aim: the wall currently being pointed (locked length, free angle) off the last corner.
+  // lenSheet: open when typing / retyping the current wall's length.
   const [build, setBuild] = useState<RoomBuild | null>(null);
-  const [dirPick, setDirPick] = useState<DirKey | null>(null);   // direction chosen, waiting on a length
+  const [aim, setAim] = useState<AimWall | null>(null);
+  const [lenSheet, setLenSheet] = useState(false);
 
   // ---- MEASUREMENT STATE ----
   const [ceilingFt, setCeilingFt] = useState<number | null>(null);
@@ -414,11 +404,18 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         }
       }
     } else if (tool === 'room') {
-      // NOTHING IS DRAWN BY DRAGGING ANY MORE. A rectangle is typed. A custom room only
-      // takes ONE tap: the starting corner. After that the canvas just pans, and the walls
-      // come from the direction pad and a typed length.
-      if (roomMode === 'custom' && !build) { g.current.kind = 'startTap'; }
-      else { g.current.kind = 'pan'; }
+      // A rectangle is typed, never dragged. A custom room drops its first corner with one
+      // tap, then each wall is a LOCKED length pinned to the last corner whose FREE END is
+      // dragged to aim it any direction. Length only changes by retyping.
+      if (roomMode === 'custom' && !build) {
+        g.current.kind = 'startTap';
+      } else if (roomMode === 'custom' && build && aim) {
+        // Grabbing anywhere near the aimed segment or its free end rotates it. The pivot is
+        // the last placed corner; the length is fixed, so only the angle moves.
+        g.current.kind = 'aimRotate';
+      } else {
+        g.current.kind = 'pan';
+      }
     } else if (tool === 'wet') {
       g.current.kind = 'wet'; setDraft({ kind: 'wet', pts: [s] }); setActive({ scene: s, px }); setGuide(null);
     } else if (tool === 'arrow') {
@@ -466,6 +463,16 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const gb = g.current.grab;
 
     if (g.current.kind === 'pan') { const [pdx, pdy] = panDelta([dx, dy], viewRef.current); setView(v => ({ ...v, tx: v.tx + pdx, ty: v.ty + pdy })); }
+    else if (g.current.kind === 'aimRotate') {
+      // Swing the aimed wall to point at the finger. The pivot is the last corner and the
+      // length is locked, so ONLY the angle changes. Totally free: no angle snapping.
+      const anchor = buildEnd;
+      if (anchor && aim) {
+        const sFinger = pxToScene(px);
+        const ang = Math.atan2(sFinger[1] - anchor[1], sFinger[0] - anchor[0]);
+        setAim({ lenU: aim.lenU, angle: ang });
+      }
+    }
     else if (g.current.kind === 'arrow') { const p = showActive(sO, pxO); setDraft(d => (d && d.kind === 'arrow' ? { ...d, to: p } : d)); }
     else if (g.current.kind === 'handle' && g.current.id != null) {
       const t: Pt = gb ? [sO[0] + gb[0], sO[1] + gb[1]] : sO;
@@ -544,9 +551,12 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       setDraft(null);
     } else if (g.current.kind === 'startTap' && !g.current.moved && g.current.downScene) {
       // THE ONE TAP a custom room takes: where its first corner goes. It snaps to the inch
-      // and to any corner already on the map, so two rooms meet exactly.
+      // and to any corner already on the map, so two rooms meet exactly. The length sheet
+      // opens right away for the first wall.
       const { p } = snapPoint(g.current.downScene);
-      if (!pointInAnyRoom(p)) setBuild({ corners: [p] });
+      if (!pointInAnyRoom(p)) { setBuild({ corners: [p] }); setAim(null); setLenSheet(true); }
+    } else if (g.current.kind === 'aimRotate') {
+      // Aimed wall is live in `aim`; nothing to commit on release, it just stopped moving.
     } else if (g.current.kind === 'floodTap' && !g.current.moved) {
       const fe = g.current.floodEdge;
       if (fe) {
@@ -624,70 +634,67 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     });
   }
 
-  // ---- WALL BY WALL --------------------------------------------------------
+  // ---- CUSTOM ROOM: ANCHOR + AIMED WALL ------------------------------------
   //
-  // Each wall runs from the last corner, in the direction the tech tapped, for exactly
-  // the length they typed. Nothing is estimated and nothing is dragged, so consecutive
-  // walls share a corner exactly rather than nearly.
+  // Drop the first corner. Then each wall is a LOCKED length pinned to the last corner,
+  // and the tech drags its free end to point it any direction (fully free, no snapping).
+  // Length only changes by retyping it. "Set corner" plants the free end and starts the
+  // next wall. Dragging the free end onto the starting corner, or "Close room", finishes.
   const buildCorners = build?.corners ?? [];
   const buildEnd: Pt | null = buildCorners.length ? buildCorners[buildCorners.length - 1] : null;
-  // The direction of the wall just placed, so we can stop the next one doubling back on
-  // it or running straight on (either would put a corner in the middle of a wall).
-  const lastDir: Pt | null = buildCorners.length >= 2 ? (() => {
-    const a = buildCorners[buildCorners.length - 2], b = buildCorners[buildCorners.length - 1];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    return [(b[0] - a[0]) / L, (b[1] - a[1]) / L] as Pt;
-  })() : null;
-  function dirAllowed(key: DirKey): boolean {
-    if (!lastDir) return true;
-    const v = sceneDir(key, view.rot);
-    return !sameDir(v, lastDir) && !sameDir(v, [-lastDir[0], -lastDir[1]]);
+  // The live free end of the wall being aimed.
+  const aimEnd: Pt | null = buildEnd && aim
+    ? [buildEnd[0] + Math.cos(aim.angle) * aim.lenU, buildEnd[1] + Math.sin(aim.angle) * aim.lenU]
+    : null;
+  const startCorner: Pt | null = buildCorners.length ? buildCorners[0] : null;
+  // Is the aimed free end sitting on the starting corner? Then setting it closes the room.
+  const aimClosesRoom = !!(aimEnd && startCorner && buildCorners.length >= 3
+    && Math.hypot(aimEnd[0] - startCorner[0], aimEnd[1] - startCorner[1]) < 14 / k);
+
+  // Type / retype the current wall's length. First wall starts the aim pointing right;
+  // retyping an existing aim keeps its angle and only swaps the length.
+  function applyWallLength(ft: number) {
+    const lenU = ft * UNITS_PER_FT;
+    setAim(a => ({ lenU, angle: a ? a.angle : 0 }));
+    setLenSheet(false);
   }
-  function addWall(ft: number) {
-    if (!dirPick || !buildEnd) { setDirPick(null); return; }
-    const v = sceneDir(dirPick, view.rot);
-    const end: Pt = [buildEnd[0] + v[0] * ft * UNITS_PER_FT, buildEnd[1] + v[1] * ft * UNITS_PER_FT];
-    const corners = [...buildCorners, end];
-    setDirPick(null);
-    // Walked right back onto the starting corner: that IS the room, so close it.
-    if (corners.length >= 4 && Math.hypot(end[0] - corners[0][0], end[1] - corners[0][1]) < INCH) {
-      commitRoom(corners.slice(0, -1));
-      return;
-    }
-    setBuild({ corners });
+  // Plant the aimed wall's free end as a real corner and begin the next wall.
+  function setCorner() {
+    if (!buildEnd || !aim || !aimEnd) return;
+    if (aimClosesRoom) { closeRoom(); return; }
+    setBuild({ corners: [...buildCorners, aimEnd] });
+    setAim(null);
+    setLenSheet(true);   // straight into the next wall's length
   }
   function undoWall() {
-    if (buildCorners.length <= 1) { setBuild(null); setDirPick(null); return; }
+    if (aim) { setAim(null); return; }                 // drop the wall being aimed first
+    if (buildCorners.length <= 1) { setBuild(null); setLenSheet(false); return; }
     setBuild({ corners: buildCorners.slice(0, -1) });
-    setDirPick(null);
+    setAim(null);
   }
-  // Close the shape. If the last corner does not line up with the first one, ONE extra
-  // corner is added so the two closing walls are square rather than a diagonal across
-  // the room. That is what makes "close it" always produce a real room.
-  function closingCorners(): Pt[] | null {
-    if (buildCorners.length < 3 || !buildEnd) return null;
-    const start = buildCorners[0];
-    const dx = Math.abs(buildEnd[0] - start[0]), dy = Math.abs(buildEnd[1] - start[1]);
-    if (dx < INCH / 2 || dy < INCH / 2) return buildCorners;          // already square to the start
-    const horizontalLast = lastDir ? Math.abs(lastDir[1]) < 1e-6 : true;
-    const corner: Pt = horizontalLast ? [buildEnd[0], start[1]] : [start[0], buildEnd[1]];
-    return [...buildCorners, corner];
-  }
+  // Close by drawing one final wall from the last PLACED corner straight to the start.
+  // Works whether or not a wall is mid-aim: the closing edge is the gap, so the shape can
+  // never be left open.
   function closeRoom() {
-    const pts = closingCorners();
-    if (!pts || pts.length < 3) return;
+    const pts = aim && aimEnd && !aimClosesRoom ? [...buildCorners, aimEnd] : buildCorners;
     commitRoom(pts);
   }
   function commitRoom(pts: Pt[]) {
-    if (pts.length < 3 || polygonArea(pts) < UNITS_PER_FT * UNITS_PER_FT * 0.25) { setBuild(null); setDirPick(null); return; }
+    if (pts.length < 3 || polygonArea(pts) < UNITS_PER_FT * UNITS_PER_FT * 0.25) { setBuild(null); setAim(null); setLenSheet(false); return; }
     snapshot();
     setScene(sc => ({ ...sc, walls: [...sc.walls, { id: uid(), points: pts }] }));
-    setBuild(null); setDirPick(null);
+    setBuild(null); setAim(null); setLenSheet(false);
     selectTool('move');
   }
-  const closePreview = build ? closingCorners() : null;
+  // The outline as it would close right now, for the fill/area preview.
+  const closePreview: Pt[] | null = (() => {
+    if (!build) return null;
+    if (aimEnd && !aimClosesRoom) return [...buildCorners, aimEnd];
+    return buildCorners;
+  })();
   const buildAreaSqFt = closePreview && closePreview.length >= 3
     ? Math.round(polygonArea(closePreview) / (UNITS_PER_FT * UNITS_PER_FT)) : 0;
+  const aimLenFt = aim ? aim.lenU / UNITS_PER_FT : 0;
 
   // TYPE THE ROOM, DO NOT DRAW IT.
   //
@@ -837,10 +844,13 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     for (let y = Math.floor(vMinY / GRID) * GRID; y <= vMaxY; y += GRID) gys.push(y);
   }
   const isCustom = tool === 'room' && roomMode === 'custom';
+  const placedWalls = Math.max(0, buildCorners.length - 1);
   const drawReadout = build
-    ? (buildCorners.length === 1
-      ? 'Pick a direction, then type that wall\u2019s length'
-      : `${buildCorners.length - 1} wall${buildCorners.length === 2 ? '' : 's'}${buildAreaSqFt > 0 ? ` \u00b7 about ${buildAreaSqFt} sq ft closed` : ''}`)
+    ? (aim
+      ? `Aim this ${ftLabel(aim.lenU)} wall, then Set corner${buildAreaSqFt > 0 ? ` \u00b7 about ${buildAreaSqFt} sq ft` : ''}`
+      : placedWalls === 0
+        ? 'Type the first wall\u2019s length'
+        : `${placedWalls} wall${placedWalls === 1 ? '' : 's'} placed${buildAreaSqFt > 0 ? ` \u00b7 about ${buildAreaSqFt} sq ft` : ''}`)
     : null;
   const fingerScene = active && tool !== 'room' && tool !== 'wet' ? pxToScene([active.px[0] + OFF, active.px[1] + OFF]) : null;
   const counts = {
@@ -997,36 +1007,62 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       })()}
       <SceneLayers scene={scene} selectedId={selectedId} activeDate={activeDate} rot={view.rot} />
 
-      {/* THE ROOM BEING BUILT: the walls placed so far, each labelled with the length that
-          was typed, plus a dashed preview of how it would close. */}
+      {/* THE CUSTOM ROOM BEING BUILT. Placed walls are solid. The wall being aimed is a
+          live segment off the last corner: locked length, free end dragged to any angle.
+          The starting corner is always visible so the tech can aim back at it to close. */}
       {build && (
-        <g style={{ pointerEvents: 'none' }}>
+        <g>
+          {/* faint fill of the shape as it would close right now */}
           {closePreview && closePreview.length >= 3 && (
-            <polygon points={ptsStr(closePreview)} fill="#1483C2" fillOpacity={0.07} stroke="none" />
+            <polygon points={ptsStr(closePreview)} fill="#1483C2" fillOpacity={0.07} stroke="none" style={{ pointerEvents: 'none' }} />
           )}
+          {/* the closing edge, dashed, from the aimed/last corner back to the start */}
           {closePreview && closePreview.length >= 3 && (
             <polyline points={ptsStr([closePreview[closePreview.length - 1], closePreview[0]])}
-                      fill="none" stroke="#1483C2" strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeDasharray="7 6" opacity={0.65} />
+                      fill="none" stroke="#1483C2" strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeDasharray="7 6" opacity={0.5} style={{ pointerEvents: 'none' }} />
           )}
-          {closePreview && closePreview.length > buildCorners.length && (
-            <polyline points={ptsStr([buildCorners[buildCorners.length - 1], closePreview[closePreview.length - 1]])}
-                      fill="none" stroke="#1483C2" strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeDasharray="7 6" opacity={0.65} />
+          {/* walls already placed */}
+          {buildCorners.length >= 2 && (
+            <polyline points={ptsStr(buildCorners)} fill="none" stroke="#1483C2" strokeWidth={4} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
           )}
-          <polyline points={ptsStr(buildCorners)} fill="none" stroke="#1483C2" strokeWidth={4} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
           {buildCorners.slice(1).map((pt, i) => {
             const a = buildCorners[i];
             const mid: Pt = [(a[0] + pt[0]) / 2, (a[1] + pt[1]) / 2];
             const len = Math.hypot(pt[0] - a[0], pt[1] - a[1]);
             return (
-              <text key={'bl' + i} x={mid[0]} y={mid[1]}
+              <text key={'bl' + i} x={mid[0]} y={mid[1]} style={{ pointerEvents: 'none' }}
                     transform={view.rot ? `rotate(${-view.rot} ${mid[0]} ${mid[1]})` : undefined}
                     textAnchor="middle" dominantBaseline="central" fontSize={13 / k} fontWeight={800}
                     fill="#0E2A4D" stroke="#fff" strokeWidth={4.5 / k} paintOrder="stroke">{ftLabel(len)}</text>
             );
           })}
+          {/* the LIVE aimed wall: pinned at buildEnd, free end at aimEnd */}
+          {buildEnd && aimEnd && (
+            <g>
+              <line x1={buildEnd[0]} y1={buildEnd[1]} x2={aimEnd[0]} y2={aimEnd[1]}
+                    stroke={aimClosesRoom ? '#16A34A' : '#F26B3A'} strokeWidth={5} vectorEffect="non-scaling-stroke" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
+              {(() => {
+                const mid: Pt = [(buildEnd[0] + aimEnd[0]) / 2, (buildEnd[1] + aimEnd[1]) / 2];
+                const len = Math.hypot(aimEnd[0] - buildEnd[0], aimEnd[1] - buildEnd[1]);
+                return (
+                  <text x={mid[0]} y={mid[1]} style={{ pointerEvents: 'none' }}
+                        transform={view.rot ? `rotate(${-view.rot} ${mid[0]} ${mid[1]})` : undefined}
+                        textAnchor="middle" dominantBaseline="central" fontSize={14 / k} fontWeight={900}
+                        fill={aimClosesRoom ? '#16A34A' : '#C2410C'} stroke="#fff" strokeWidth={4.5 / k} paintOrder="stroke">{ftLabel(len)}</text>
+                );
+              })()}
+              {/* the DRAG HANDLE: the free end. This is the only thing you grab to aim. */}
+              <circle cx={aimEnd[0]} cy={aimEnd[1]} r={16 / k} fill={aimClosesRoom ? '#16A34A' : '#F26B3A'} fillOpacity={0.18} stroke={aimClosesRoom ? '#16A34A' : '#F26B3A'} strokeWidth={2.5 / k} />
+              <circle cx={aimEnd[0]} cy={aimEnd[1]} r={7 / k} fill={aimClosesRoom ? '#16A34A' : '#F26B3A'} stroke="#fff" strokeWidth={2.5 / k} />
+            </g>
+          )}
+          {/* every joint, with the START corner drawn larger and ringed so it is obvious */}
           {buildCorners.map((pt, i) => (
-            <circle key={'bc' + i} cx={pt[0]} cy={pt[1]} r={(i === 0 ? 9 : 6) / k}
-                    fill={i === 0 ? '#1483C2' : '#fff'} stroke="#1483C2" strokeWidth={2.5 / k} />
+            <g key={'bc' + i} style={{ pointerEvents: 'none' }}>
+              {i === 0 && <circle cx={pt[0]} cy={pt[1]} r={13 / k} fill="none" stroke="#1483C2" strokeWidth={2 / k} strokeDasharray={`${3 / k} ${3 / k}`} />}
+              <circle cx={pt[0]} cy={pt[1]} r={(i === 0 ? 8 : 5.5) / k}
+                      fill={i === 0 ? '#1483C2' : '#fff'} stroke="#1483C2" strokeWidth={2.5 / k} />
+            </g>
           ))}
         </g>
       )}
@@ -1314,14 +1350,14 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         )}
         {isCustom && !build && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
-            <div className="bg-navy/90 text-white rounded-full px-5 py-3 text-sm font-bold shadow-lg">
-              Tap where the first corner goes
+            <div className="bg-navy/90 text-white rounded-full px-5 py-3 text-sm font-bold shadow-lg text-center">
+              Tap the map where the room{'\u2019'}s first corner goes
             </div>
           </div>
         )}
       </div>
 
-      {/* ---- THE DIRECTION PAD: pick a way, type a length, the wall is placed ---- */}
+      {/* ---- AIM CONTROLS: length is typed, angle is dragged, corner is set ---- */}
       {isCustom && build && (
         <div className="bg-white border-t border-gray-100 px-3 pt-2 pb-2">
           <div className="flex items-center justify-between">
@@ -1329,32 +1365,50 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
               Wall {buildCorners.length}
             </span>
             <span className="text-[11px] font-semibold text-gray-500">
-              {buildCorners.length === 1 ? 'Which way does it run?' : 'Which way does the next wall turn?'}
+              {aim ? (aimClosesRoom ? 'On the start corner. Set to close.' : 'Drag the orange dot to aim it.') : 'Type this wall\u2019s length.'}
             </span>
           </div>
-          <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-            {DIR_KEYS.map(dk => {
-              const Icon = DIR_ICON[dk];
-              const ok = dirAllowed(dk);
-              return (
-                <button key={dk} disabled={!ok} onClick={() => setDirPick(dk)}
-                  className={`flex flex-col items-center gap-0.5 py-2 rounded-2xl font-bold ${ok ? 'bg-sky-soft text-sky-deep active:bg-sky/20' : 'bg-gray-50 text-gray-300'}`}>
-                  <Icon size={20} strokeWidth={2.6} />
-                  <span className="text-[10px] capitalize">{dk}</span>
+          {aim ? (
+            <>
+              <button onClick={() => setLenSheet(true)}
+                className="w-full mt-1.5 flex items-center justify-center gap-2 rounded-xl bg-sky-soft text-sky-deep py-2.5 text-sm font-extrabold active:bg-sky/20">
+                <Ruler size={16} /> {ftLabel(aim.lenU)} &middot; tap to change length
+              </button>
+              <div className="flex gap-2 mt-2">
+                <button onClick={undoWall}
+                  className="flex-1 border border-gray-200 rounded-xl py-2.5 text-sm font-bold text-gray-600 active:bg-gray-50">
+                  {placedWalls === 0 ? 'Cancel' : 'Back'}
                 </button>
-              );
-            })}
-          </div>
-          <div className="flex gap-2 mt-2">
-            <button onClick={undoWall}
-              className="flex-1 border border-gray-200 rounded-xl py-2.5 text-sm font-bold text-gray-600 active:bg-gray-50">
-              {buildCorners.length <= 1 ? 'Cancel' : 'Undo wall'}
-            </button>
-            <button onClick={closeRoom} disabled={buildCorners.length < 3}
-              className="btn-primary flex-1 py-2.5 justify-center text-sm disabled:opacity-40">
-              Close room
-            </button>
-          </div>
+                <button onClick={setCorner}
+                  className={`flex-1 py-2.5 rounded-xl justify-center text-sm font-extrabold text-white active:scale-95 ${aimClosesRoom ? 'bg-green-600' : 'bg-gradient-to-br from-sky to-sky-deep'}`}>
+                  {aimClosesRoom ? 'Close room' : 'Set corner'}
+                </button>
+              </div>
+              {placedWalls >= 2 && !aimClosesRoom && (
+                <button onClick={closeRoom}
+                  className="w-full mt-2 py-2 rounded-xl text-sm font-bold text-navy border border-navy/20 active:bg-navy/5">
+                  Close straight to start
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="flex gap-2 mt-1.5">
+              <button onClick={undoWall}
+                className="flex-1 border border-gray-200 rounded-xl py-2.5 text-sm font-bold text-gray-600 active:bg-gray-50">
+                {placedWalls === 0 ? 'Cancel' : 'Undo last wall'}
+              </button>
+              <button onClick={() => setLenSheet(true)}
+                className="btn-primary flex-1 py-2.5 justify-center text-sm">
+                <Ruler size={16} /> Add wall
+              </button>
+              {placedWalls >= 2 && (
+                <button onClick={closeRoom}
+                  className="flex-1 py-2.5 rounded-xl justify-center text-sm font-bold text-navy border border-navy/20 active:bg-navy/5">
+                  Close room
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1424,7 +1478,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
         {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, or an OPENING to edit it.')}
         {tool === 'room' && (roomMode === 'custom'
-          ? (build ? 'Pick the direction, type the length, and the wall joins the last one. Close room finishes it.' : 'Tap the map to drop the first corner. Then it is direction, length, repeat.')
+          ? (build ? (aim ? 'Drag the orange dot to aim the wall any direction. Its length stays fixed. Set corner to plant it.' : 'Add wall, type its length, then aim it. Close the room by aiming back onto the start corner.') : 'Tap the map to drop the first corner. Then each wall is a fixed length you aim any direction.')
           : 'Type the width and length and the room draws itself exactly.')}
         {tool === 'wet' && (activeWetId ? 'Keep painting the wet spot, then tap Done. Two fingers to pan.' : 'Paint over the wet spots. Lift and paint more; tap Done to finish.')}
         {tool === 'equip' && 'Drag onto the map. The preview shows where it lands, release to drop.'}
@@ -1454,15 +1508,15 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       </nav>
 
       {/* ---- MEASUREMENT SHEETS ---- */}
-      {dirPick && (
+      {lenSheet && (
         <MeasureSheet
           title={`Wall ${buildCorners.length} length`}
-          subtitle={`Running ${dirPick} from the last corner. The wall starts exactly where the last one ended.`}
-          initialFt={10}
+          subtitle="Type the exact wall length, then drag its free end to aim it any direction."
+          initialFt={aim ? aimLenFt : 10}
           min={0.25} max={200}
           quick={[{ label: "8'", ft: 8 }, { label: "10'", ft: 10 }, { label: "12'", ft: 12 }]}
-          onCancel={() => setDirPick(null)}
-          onSave={addWall}
+          onCancel={() => { setLenSheet(false); if (!aim && placedWalls === 0) { setBuild(null); } }}
+          onSave={applyWallLength}
         />
       )}
       {edgeSheet && (
