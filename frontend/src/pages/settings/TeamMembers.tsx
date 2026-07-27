@@ -46,23 +46,40 @@ export default function TeamMembers() {
 
   // Create the member's login directly. The owner types the email and a password, and the
   // person can sign in with exactly those on the normal login screen. No email is sent.
+  //
+  // We call the function with a plain fetch instead of supabase.functions.invoke, and send
+  // the signed-in owner's OWN access token as the bearer. On projects using the new API keys,
+  // invoke() attaches the publishable key on the Authorization header, which the platform
+  // tries to read as a JWT and rejects before the function runs (the CORS error). A real user
+  // access token is a valid JWT, so the gateway lets it through and the function can also read
+  // who the caller is from it.
   async function createMember() {
     if (!activeOrg || !email.trim() || password.length < 8) return;
     setBusy(true); setMsg(null);
     try {
-      const { data, error } = await supabase.functions.invoke('create-team-member', {
-        body: { orgId: activeOrg.id, email: email.trim(), password, role }
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) { setMsg({ kind: 'err', text: 'Your session has expired. Sign in again.' }); return; }
+
+      // Build the function URL from the client's own configured URL, so this does not depend
+      // on any particular env var name being present in the build.
+      const base = (supabase as any).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
+      const url = `${base}/functions/v1/create-team-member`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrg.id, email: email.trim(), password, role })
       });
-      // A non-2xx from the function comes back as an error with the JSON body attached.
-      if (error) {
-        let text = 'Could not add the member.';
-        try { const ctx = await (error as any).context?.json?.(); if (ctx?.error) text = ctx.error; } catch { /* keep default */ }
-        setMsg({ kind: 'err', text });
+
+      let payload: any = null;
+      try { payload = await resp.json(); } catch { /* no body */ }
+
+      if (!resp.ok || payload?.error) {
+        setMsg({ kind: 'err', text: payload?.error ?? `Could not add the member (error ${resp.status}).` });
         return;
       }
-      if ((data as any)?.error) { setMsg({ kind: 'err', text: (data as any).error }); return; }
 
-      const created = (data as any)?.status === 'created';
+      const created = payload?.status === 'created';
       setMsg({
         kind: 'ok',
         text: created
