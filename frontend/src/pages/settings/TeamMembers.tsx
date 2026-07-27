@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, UserPlus, Trash2, Mail, Users } from 'lucide-react';
+import { ChevronLeft, UserPlus, Trash2, Users, Eye, EyeOff, Copy, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 
 interface Member { user_id: string; email: string | null; role: string; is_self: boolean }
-interface Invite { id: string; email: string; role: string; created_at: string }
 
 const ROLES = [
   { value: 'manager', label: 'Manager' },
@@ -13,12 +12,22 @@ const ROLES = [
 ];
 const roleLabel = (r: string) => ({ owner: 'Owner', manager: 'Manager', lead_tech: 'Lead tech', tech: 'Tech' } as Record<string, string>)[r] || r;
 
+// A readable password the owner can hand off, if they would rather not think one up.
+function suggestPassword(): string {
+  const words = ['River', 'Cedar', 'Maple', 'Harbor', 'Summit', 'Falcon', 'Anchor', 'Copper', 'Willow', 'Canyon'];
+  const w = words[Math.floor(Math.random() * words.length)];
+  const n = Math.floor(1000 + Math.random() * 9000);
+  return `${w}-${n}`;
+}
+
 export default function TeamMembers() {
   const nav = useNavigate();
   const { activeOrg, role: myRole } = useOrg();
   const [members, setMembers] = useState<Member[]>([]);
-  const [invites, setInvites] = useState<Invite[]>([]);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [role, setRole] = useState('tech');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -28,22 +37,42 @@ export default function TeamMembers() {
     if (!activeOrg) return;
     const { data: m } = await supabase.rpc('resto_list_org_members', { p_org: activeOrg.id });
     setMembers((m as Member[]) ?? []);
-    if (canManage) {
-      const { data: i } = await supabase.rpc('resto_list_org_invites', { p_org: activeOrg.id });
-      setInvites((i as Invite[]) ?? []);
-    }
   }
   useEffect(() => { void load(); /* eslint-disable-next-line */ }, [activeOrg?.id, myRole]);
 
-  async function invite() {
-    if (!activeOrg || !email.trim()) return;
+  async function copyPw() {
+    try { await navigator.clipboard.writeText(password); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked, no-op */ }
+  }
+
+  // Create the member's login directly. The owner types the email and a password, and the
+  // person can sign in with exactly those on the normal login screen. No email is sent.
+  async function createMember() {
+    if (!activeOrg || !email.trim() || password.length < 8) return;
     setBusy(true); setMsg(null);
     try {
-      const { data, error } = await supabase.rpc('resto_invite_member', { p_org: activeOrg.id, p_email: email.trim(), p_role: role });
-      if (error) { setMsg({ kind: 'err', text: error.message }); return; }
-      setEmail('');
-      setMsg({ kind: 'ok', text: data === 'added' ? 'Added to the team.' : 'Invite sent. They join when they sign in with this email.' });
+      const { data, error } = await supabase.functions.invoke('create-team-member', {
+        body: { orgId: activeOrg.id, email: email.trim(), password, role }
+      });
+      // A non-2xx from the function comes back as an error with the JSON body attached.
+      if (error) {
+        let text = 'Could not add the member.';
+        try { const ctx = await (error as any).context?.json?.(); if (ctx?.error) text = ctx.error; } catch { /* keep default */ }
+        setMsg({ kind: 'err', text });
+        return;
+      }
+      if ((data as any)?.error) { setMsg({ kind: 'err', text: (data as any).error }); return; }
+
+      const created = (data as any)?.status === 'created';
+      setMsg({
+        kind: 'ok',
+        text: created
+          ? `${email.trim()} can now sign in with the password you set.`
+          : `${email.trim()} already had an account and was added to your team. Their existing password still works.`
+      });
+      setEmail(''); setPassword(''); setShowPw(false);
       await load();
+    } catch (e: any) {
+      setMsg({ kind: 'err', text: e?.message ?? 'Something went wrong. Try again.' });
     } finally { setBusy(false); }
   }
 
@@ -53,14 +82,12 @@ export default function TeamMembers() {
     await load();
   }
   async function removeMember(userId: string) {
-    if (!activeOrg || !confirm('Remove this team member?')) return;
+    if (!activeOrg || !confirm('Remove this team member? They will lose access to every job in this company.')) return;
     await supabase.from('resto_org_members').delete().eq('org_id', activeOrg.id).eq('user_id', userId);
     await load();
   }
-  async function revokeInvite(id: string) {
-    await supabase.from('resto_org_invites').delete().eq('id', id);
-    await load();
-  }
+
+  const canSubmit = !busy && !!email.trim() && password.length >= 8;
 
   return (
     <div className="pb-10">
@@ -74,14 +101,53 @@ export default function TeamMembers() {
         {canManage && (
           <div className="card space-y-2.5">
             <div className="text-sm font-bold flex items-center gap-1.5"><UserPlus size={15} className="text-brand" /> Add a team member</div>
-            <input className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky"
-                   placeholder="name@company.com" type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={e => setEmail(e.target.value)} />
-            <div className="flex gap-2">
-              <select className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" value={role} onChange={e => setRole(e.target.value)}>
+            <p className="text-[12px] text-gray-500 leading-snug">
+              Set their email and a password. They sign in with exactly these on the login screen. No email is sent, so tell them the password yourself.
+            </p>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Email</label>
+              <input className="w-full mt-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky"
+                     placeholder="name@company.com" type="email" autoCapitalize="none" autoCorrect="off" autoComplete="off"
+                     value={email} onChange={e => setEmail(e.target.value)} />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Password</label>
+              <div className="flex gap-2 mt-1">
+                <div className="flex-1 relative">
+                  <input className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 pr-10 text-sm outline-none focus:border-sky"
+                         placeholder="At least 8 characters" type={showPw ? 'text' : 'password'} autoComplete="new-password"
+                         value={password} onChange={e => setPassword(e.target.value)} />
+                  <button type="button" onClick={() => setShowPw(v => !v)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 active:text-gray-600 p-1">
+                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {password
+                  ? <button type="button" onClick={copyPw} className="px-3 rounded-xl border border-gray-200 text-gray-500 active:bg-gray-50 flex items-center" aria-label="Copy password">
+                      {copied ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
+                    </button>
+                  : <button type="button" onClick={() => { setPassword(suggestPassword()); setShowPw(true); }} className="px-3 rounded-xl border border-gray-200 text-[12px] font-semibold text-sky-deep active:bg-sky-soft">
+                      Suggest
+                    </button>}
+              </div>
+              {password.length > 0 && password.length < 8 && (
+                <p className="text-[11px] text-amber-600 mt-1 font-medium">A little longer, at least 8 characters.</p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Role</label>
+              <select className="w-full mt-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-sky" value={role} onChange={e => setRole(e.target.value)}>
                 {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
-              <button onClick={invite} disabled={busy || !email.trim()} className="btn-primary px-4 disabled:opacity-50">{busy ? 'Adding…' : 'Add'}</button>
             </div>
+
+            <button onClick={createMember} disabled={!canSubmit} className="btn-primary w-full justify-center disabled:opacity-50">
+              {busy ? 'Creating…' : 'Create login'}
+            </button>
+
             {msg && <div className={`text-xs font-medium rounded-xl px-3 py-2 ${msg.kind === 'err' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{msg.text}</div>}
             <p className="text-[11px] text-gray-400">Team members can view and edit every job. Managers can also add and remove members.</p>
           </div>
@@ -109,24 +175,6 @@ export default function TeamMembers() {
             ))}
           </div>
         </div>
-
-        {canManage && invites.length > 0 && (
-          <div>
-            <div className="text-[12px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-2">Pending invites</div>
-            <div className="space-y-2">
-              {invites.map(i => (
-                <div key={i.id} className="card flex items-center gap-3 py-3">
-                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><Mail size={16} /></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm truncate">{i.email}</div>
-                    <div className="text-[11px] text-gray-400 font-medium">{roleLabel(i.role)} · invited, not yet joined</div>
-                  </div>
-                  <button onClick={() => revokeInvite(i.id)} className="text-gray-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
