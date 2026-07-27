@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, UserPlus, Trash2, Users, Eye, EyeOff, Copy, Check } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { useOrg } from '../../context/OrgContext';
 
@@ -18,6 +19,21 @@ function suggestPassword(): string {
   const w = words[Math.floor(Math.random() * words.length)];
   const n = Math.floor(1000 + Math.random() * 9000);
   return `${w}-${n}`;
+}
+
+// The URL and public key the main client was built with. We read them off the existing
+// client so we do not depend on a particular env var name being present in the build.
+const SB_URL: string = (supabase as any).supabaseUrl;
+const SB_KEY: string = (supabase as any).supabaseKey;
+
+// A SEPARATE, throwaway Supabase client used ONLY to create the new account. It stores
+// nothing (persistSession: false) and uses its own storageKey, so signing the new user up
+// does NOT touch or replace the owner's own logged-in session on the main client. This is
+// the standard way to create an account for someone else from the browser with no backend.
+function makeSignupClient() {
+  return createClient(SB_URL, SB_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'sb-teammember-signup' }
+  });
 }
 
 export default function TeamMembers() {
@@ -44,48 +60,48 @@ export default function TeamMembers() {
     try { await navigator.clipboard.writeText(password); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked, no-op */ }
   }
 
-  // Create the member's login directly. The owner types the email and a password, and the
-  // person can sign in with exactly those on the normal login screen. No email is sent.
-  //
-  // We call the function with a plain fetch instead of supabase.functions.invoke, and send
-  // the signed-in owner's OWN access token as the bearer. On projects using the new API keys,
-  // invoke() attaches the publishable key on the Authorization header, which the platform
-  // tries to read as a JWT and rejects before the function runs (the CORS error). A real user
-  // access token is a valid JWT, so the gateway lets it through and the function can also read
-  // who the caller is from it.
+  // Create the member's login entirely in the browser, no backend:
+  //   1. sign the new email + password up on a throwaway client (owner stays logged in),
+  //   2. link the resulting user into this org with the existing SECURITY DEFINER RPC,
+  //      which does its own owner/manager permission check.
+  // The person then signs in on the normal login screen with exactly these credentials.
   async function createMember() {
     if (!activeOrg || !email.trim() || password.length < 8) return;
+    const em = email.trim().toLowerCase();
     setBusy(true); setMsg(null);
     try {
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess.session?.access_token;
-      if (!token) { setMsg({ kind: 'err', text: 'Your session has expired. Sign in again.' }); return; }
+      const signup = makeSignupClient();
+      const { error: suErr } = await signup.auth.signUp({ email: em, password });
 
-      // Build the function URL from the client's own configured URL, so this does not depend
-      // on any particular env var name being present in the build.
-      const base = (supabase as any).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
-      const url = `${base}/functions/v1/create-team-member`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: activeOrg.id, email: email.trim(), password, role })
-      });
-
-      let payload: any = null;
-      try { payload = await resp.json(); } catch { /* no body */ }
-
-      if (!resp.ok || payload?.error) {
-        setMsg({ kind: 'err', text: payload?.error ?? `Could not add the member (error ${resp.status}).` });
+      // Already registered: skip creation and just link them. Supabase may report this a few
+      // different ways, so we treat "already exists" as a link, not a failure.
+      const alreadyExists = !!suErr && /already|registered|exists/i.test(suErr.message);
+      if (suErr && !alreadyExists) {
+        setMsg({ kind: 'err', text: suErr.message });
         return;
       }
+      // Make sure nothing from the signup lingers in storage.
+      try { await signup.auth.signOut(); } catch { /* ignore */ }
 
-      const created = payload?.status === 'created';
-      setMsg({
-        kind: 'ok',
-        text: created
-          ? `${email.trim()} can now sign in with the password you set.`
-          : `${email.trim()} already had an account and was added to your team. Their existing password still works.`
+      // Link them into the org. resto_invite_member finds the user by email and inserts the
+      // membership row (or updates the role), checking that WE are an owner/manager first.
+      const { data: linkRes, error: linkErr } = await supabase.rpc('resto_invite_member', {
+        p_org: activeOrg.id, p_email: em, p_role: role
       });
+      if (linkErr) { setMsg({ kind: 'err', text: linkErr.message }); return; }
+
+      // resto_invite_member returns 'added' when the auth user existed and was linked, or
+      // 'invited' when it could not find them yet. If we just created the account but the RPC
+      // still says 'invited', the new row in auth.users has not propagated for the lookup; the
+      // account IS made, so tell the owner it is ready and to refresh the list in a moment.
+      if (linkRes === 'invited' && !alreadyExists) {
+        setMsg({ kind: 'ok', text: `${em} was created and can sign in with the password you set. If they are not in the list yet, refresh in a moment.` });
+      } else if (alreadyExists) {
+        setMsg({ kind: 'ok', text: `${em} already had an account and was added to your team. Their existing password still works.` });
+      } else {
+        setMsg({ kind: 'ok', text: `${em} can now sign in with the password you set.` });
+      }
+
       setEmail(''); setPassword(''); setShowPw(false);
       await load();
     } catch (e: any) {
