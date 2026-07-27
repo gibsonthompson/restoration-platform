@@ -36,6 +36,23 @@ function makeSignupClient() {
   });
 }
 
+// The login screen the employee opens. Read from the running app so it is always correct,
+// whether that is the Vercel URL or a custom domain, with no hardcoded guess.
+const loginUrl = () => `${window.location.origin}/login`;
+
+// The ready-to-send handoff. The owner copies this and texts or emails it to the employee.
+function handoffMessage(companyName: string, email: string, password: string): string {
+  return [
+    `You've been added to ${companyName} on ScopeBook.`,
+    ``,
+    `Sign in here: ${loginUrl()}`,
+    `Email: ${email}`,
+    `Password: ${password}`,
+    ``,
+    `Open the link, sign in with that email and password, and you're in. You can change your password after you sign in.`
+  ].join('\n');
+}
+
 export default function TeamMembers() {
   const nav = useNavigate();
   const { activeOrg, role: myRole } = useOrg();
@@ -47,6 +64,10 @@ export default function TeamMembers() {
   const [role, setRole] = useState('tech');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // After a login is created, hold the details so the owner can copy a ready-to-send message
+  // with the email, password and link. Kept separate from the form fields, which clear.
+  const [created, setCreated] = useState<{ email: string; password: string } | null>(null);
+  const [msgCopied, setMsgCopied] = useState(false);
   const canManage = myRole === 'owner' || myRole === 'manager';
 
   async function load() {
@@ -58,6 +79,12 @@ export default function TeamMembers() {
 
   async function copyPw() {
     try { await navigator.clipboard.writeText(password); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked, no-op */ }
+  }
+
+  async function copyHandoff() {
+    if (!created) return;
+    const text = handoffMessage(activeOrg?.name || 'the team', created.email, created.password);
+    try { await navigator.clipboard.writeText(text); setMsgCopied(true); setTimeout(() => setMsgCopied(false), 2000); } catch { /* clipboard blocked */ }
   }
 
   // Create the member's login entirely in the browser, no backend:
@@ -94,15 +121,19 @@ export default function TeamMembers() {
       // 'invited' when it could not find them yet. If we just created the account but the RPC
       // still says 'invited', the new row in auth.users has not propagated for the lookup; the
       // account IS made, so tell the owner it is ready and to refresh the list in a moment.
-      if (linkRes === 'invited' && !alreadyExists) {
-        setMsg({ kind: 'ok', text: `${em} was created and can sign in with the password you set. If they are not in the list yet, refresh in a moment.` });
-      } else if (alreadyExists) {
+      if (alreadyExists) {
+        // The owner did not set this password, so we cannot hand it off. Just confirm linking.
+        setCreated(null);
         setMsg({ kind: 'ok', text: `${em} already had an account and was added to your team. Their existing password still works.` });
       } else {
-        setMsg({ kind: 'ok', text: `${em} can now sign in with the password you set.` });
+        // A brand new login the owner set the password for: show the handoff panel.
+        setCreated({ email: em, password });
+        setMsg(linkRes === 'invited'
+          ? { kind: 'ok', text: `${em} was created. If they are not in the list yet, refresh in a moment.` }
+          : null);
       }
 
-      setEmail(''); setPassword(''); setShowPw(false);
+      setEmail(''); setPassword(''); setShowPw(false); setMsgCopied(false);
       await load();
     } catch (e: any) {
       setMsg({ kind: 'err', text: e?.message ?? 'Something went wrong. Try again.' });
@@ -183,6 +214,37 @@ export default function TeamMembers() {
 
             {msg && <div className={`text-xs font-medium rounded-xl px-3 py-2 ${msg.kind === 'err' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{msg.text}</div>}
             <p className="text-[11px] text-gray-400">Team members can view and edit every job. Managers can also add and remove members.</p>
+          </div>
+        )}
+
+        {/* After a login is created: the details, and one button that copies a ready-to-send
+            message the owner can text or email to the new employee. No email is sent by the
+            app, so this is how the person gets their link and password. */}
+        {canManage && created && (
+          <div className="card space-y-3 border border-green-200 bg-green-50/40">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-green-100 text-green-700 flex items-center justify-center shrink-0"><Check size={17} /></div>
+              <div className="text-sm font-bold text-navy">Login created for {created.email}</div>
+            </div>
+            <p className="text-[12px] text-gray-500 leading-snug">
+              Send this to them. It has the link, their email and their password. No email was sent automatically.
+            </p>
+
+            <div className="rounded-xl bg-white border border-gray-200 p-3 text-[12px] text-gray-700 whitespace-pre-wrap font-medium leading-relaxed select-text">
+{handoffMessage(activeOrg?.name || 'the team', created.email, created.password)}
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={copyHandoff}
+                className="btn-primary flex-1 justify-center">
+                {msgCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy message</>}
+              </button>
+              <button onClick={() => setCreated(null)}
+                className="px-4 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 active:bg-gray-50">
+                Done
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400">Copy this now. For their security, the password is not stored and will not be shown again after you close this.</p>
           </div>
         )}
 
