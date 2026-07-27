@@ -166,7 +166,7 @@ export default function TeamMembers() {
           <div className="card space-y-2.5">
             <div className="text-sm font-bold flex items-center gap-1.5"><UserPlus size={15} className="text-brand" /> Add a team member</div>
             <p className="text-[12px] text-gray-500 leading-snug">
-              Set their email and a password. They sign in with exactly these on the login screen. No email is sent, so tell them the password yourself.
+              Set their email and a password. They sign in with exactly these on the login screen.
             </p>
 
             <div>
@@ -227,7 +227,7 @@ export default function TeamMembers() {
               <div className="text-sm font-bold text-navy">Login created for {created.email}</div>
             </div>
             <p className="text-[12px] text-gray-500 leading-snug">
-              Send this to them. It has the link, their email and their password. No email was sent automatically.
+              Send this to them. It has the link, their email and their password.
             </p>
 
             <div className="rounded-xl bg-white border border-gray-200 p-3 text-[12px] text-gray-700 whitespace-pre-wrap font-medium leading-relaxed select-text">
