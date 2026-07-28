@@ -11,7 +11,7 @@ import {
   type FloodCut,
   normalizeScene, uid, hitEquipment, hitPoint, hitWall, snapGrid, allReadingDates, todayISO, upsertReading, pointDisplay,
   sceneFloorSqFt, suggestEquipment, hitArrow, hitOpening, nearestWallEdge, wallById, ptsStr, floodCutStats, containmentStats, edgeLenFt, floodCutEnds, projectToEdgeFt,
-  setEdgeLengthFt, polyEdgeLenFt, roomDimensions, roomBBoxFt, polygonArea,
+  setEdgeLengthFt, polyEdgeLenFt, roomDimensions, roomBBoxFt, polygonArea, wetSqFt,
   FLOOD_HEIGHTS, MATERIALS_BY_SURFACE, WET_SURFACES, OPENING_DEFAULT_FT, OPENING_DEFAULT_HEIGHT_FT, OPENING_LABEL, OPENING_DESC, SCENE_SIZE, UNITS_PER_FT, EQUIP_META,
   type Scene, type Pt, type EquipType, type OpeningKind
 } from './sketchModel';
@@ -1847,6 +1847,23 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         const wa = scene.wetAreas.find(w => w.id === pendingWetId);
         if (!wa) return null;
         const setWet = (patch: Partial<typeof wa>) => setScene(sc => ({ ...sc, wetAreas: sc.wetAreas.map(w => (w.id === pendingWetId ? { ...w, ...patch } : w)) }));
+        const surface = wa.surface ?? 'floor';
+        // Full surface area, so the affected number is shown against it and capped to it.
+        // Same roomDimensions the header uses, so the numbers match what the tech sees up top.
+        const wetDims = roomDimensions(scene, ceilingFt);
+        const surfaceMax = surface === 'floor' ? wetDims.F : surface === 'ceiling' ? wetDims.C : wetDims.grossWallSF;
+        // What the input shows: the tech's typed value if set, else the drawn estimate
+        // (floor brush) as a starting point, else blank. Walls and ceiling have nothing to
+        // draw, so the tech simply types the number.
+        const drawn = surface === 'floor' ? wetSqFt({ ...wa, sqft: undefined }) : 0;
+        const shownSqft = wa.sqft != null ? wa.sqft : (surface === 'floor' && drawn > 0 ? Math.round(drawn) : undefined);
+        const overCap = surfaceMax > 0 && shownSqft != null && shownSqft > surfaceMax + 0.5;
+        const setSqft = (raw: string) => {
+          const n = parseFloat(raw);
+          if (raw.trim() === '' || isNaN(n) || n <= 0) { setWet({ sqft: undefined }); return; }
+          const capped = surfaceMax > 0 ? Math.min(n, Math.round(surfaceMax * 100) / 100) : n;
+          setWet({ sqft: capped });
+        };
         return (
           <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
             <div className="absolute inset-0 bg-navy/30" onClick={() => setPendingWetId(null)} />
@@ -1865,6 +1882,32 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
               </div>
               <input value={wa.material ?? ''} onChange={e => setWet({ material: e.target.value })}
                 placeholder="Or type a material name" className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] focus:outline-none focus:border-sky" />
+
+              {/* AFFECTED SQUARE FOOTAGE. Floor starts from the drawn area (confirm or
+                  correct it); walls and ceiling are typed, since there is nothing to draw.
+                  Capped at the full surface, so an affected number can only reduce from it. */}
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-4">Affected area</label>
+              <div className="flex gap-2 mt-1 items-center">
+                <input
+                  value={shownSqft != null ? String(shownSqft) : ''}
+                  onChange={e => setSqft(e.target.value)}
+                  inputMode="decimal"
+                  placeholder={surface === 'floor' ? 'Confirm the wet floor area' : `How much ${surface} is wet`}
+                  className="flex-1 border border-gray-200 rounded-xl px-3.5 py-2.5 text-[16px] font-bold focus:outline-none focus:border-sky" />
+                <span className="text-xs text-gray-400">sq ft</span>
+              </div>
+              {surfaceMax > 0 && (
+                <p className="text-[10px] text-gray-400 mt-1">
+                  {surface[0].toUpperCase() + surface.slice(1)} is {surfaceMax} sq ft. Enter only the wet portion.
+                </p>
+              )}
+              {overCap && (
+                <p className="text-[10px] text-amber-600 mt-1">Capped to the {surface} area.</p>
+              )}
+              {surface === 'floor' && drawn > 0 && wa.sqft == null && (
+                <p className="text-[10px] text-gray-400 mt-1">From your drawing. Tap to change it to the measured wet area.</p>
+              )}
+
               {(wa.surface ?? 'floor') === 'floor' && (
                 <>
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Flooring plan</label>

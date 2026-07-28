@@ -5,7 +5,7 @@
 export type EquipType = 'air_mover' | 'dehumidifier' | 'air_scrubber';
 export type Pt = [number, number];
 
-export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; disposition?: 'dry' | 'remove'; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint; disposition = dry-in-place (extraction) vs remove (flooring tear-out) for the Xactimate export
+export interface Poly { id: string; points: Pt[]; material?: string; surface?: 'floor' | 'wall' | 'ceiling'; brush?: number; strokes?: Pt[][]; disposition?: 'dry' | 'remove'; sqft?: number; }   // affected surface + material (S500); brush = painted stroke width; strokes = multi-stroke paint; disposition = dry-in-place (extraction) vs remove (flooring tear-out) for the Xactimate export; sqft = tech-confirmed affected square footage (overrides the drawn/brush area, never exceeds the surface)
 // Xactimate-shaped demo/prep scope, measured from sketch geometry:
 export interface FloodCut { wallId: string; edge: number; heightFt: number; lengthFt?: number; startFt?: number; }   // DRYW flood-cut: LF at cut height, positioned startFt from the edge start
 export interface Containment { id: string; heightFt: number; x?: number; y?: number; widthFt?: number; label?: string; from?: Pt; to?: Pt; }   // PLASTIC barrier: width x height (tap-placed); from/to legacy
@@ -343,8 +343,14 @@ export const WALL_MATERIALS = ['Drywall', 'Plaster', 'Paneling', 'Baseboard', 'T
 export const CEILING_MATERIALS = ['Drywall', 'Plaster', 'Acoustic Tile', 'Insulation', 'Trim'];
 export const MATERIALS_BY_SURFACE: Record<'floor' | 'wall' | 'ceiling', string[]> = { floor: FLOOR_MATERIALS, wall: WALL_MATERIALS, ceiling: CEILING_MATERIALS };
 
-// Wet area square footage: painted brush stroke (length x width) or legacy filled polygon
+// Wet area square footage. A tech-confirmed affected sqft (w.sqft) ALWAYS wins: it is
+// the number entered on the material sheet, the defensible figure for a carrier document.
+// Only when it is absent do we fall back to the drawn geometry: the painted brush stroke
+// (length x width + endcaps) or a legacy filled polygon. The brush fallback is a rough
+// estimate of a finger drag, never billed on its own, which is why the material sheet
+// asks the tech to confirm or correct it. (Backend twin: resto-scope-quantities.wetSqFt.)
 export function wetSqFt(w: Poly): number {
+  if (Number.isFinite(w.sqft) && (w.sqft as number) > 0) return w.sqft as number;
   if (w.brush) {
     const strokes = w.strokes ?? (w.points.length ? [w.points] : []);
     let area = 0;
