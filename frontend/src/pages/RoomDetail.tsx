@@ -18,6 +18,22 @@ interface MoldScan {
   indicators: string[]; recommend_lab_sampling: boolean; summary: string | null;
 }
 
+// One photo's progress through the upload, so the UI can show each tile filling in instead
+// of a single "Uploading..." with no end in sight. 'error' keeps a failed photo visible so
+// the tech knows it did not save, rather than it silently vanishing.
+interface Pending { key: string; name: string; preview: string; status: 'uploading' | 'error'; }
+
+// A weak-signal upload can hang forever on the network. Cap each file so a stall REPORTS
+// itself instead of parking the whole batch on one await (which is what left it stuck on
+// "Uploading..." until the app was backgrounded and remounted).
+const UPLOAD_TIMEOUT_MS = 45000;
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out. Check your signal and try again.`)), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
+}
+
 // CEILING HEIGHT IS NOT SET HERE. It is a measurement, and it belongs where the tech is
 // measuring: inside the sketch. The sketch editor writes resto_rooms.height_ft, and that
 // is the only place it is written. Three doors into one number is how the three of them
@@ -69,7 +85,10 @@ export default function RoomDetail() {
   const [viewer, setViewer] = useState<MediaRow | null>(null);
   const [caption, setCaption] = useState('');
   const [scanning, setScanning] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  // Per-file upload progress. `pending` drives the tiles that fill in as each photo lands.
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const [uploadDone, setUploadDone] = useState(0);
   const [savingScope, setSavingScope] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -78,6 +97,7 @@ export default function RoomDetail() {
   const [savingName, setSavingName] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
+  const uploading = pending.length > 0;
 
   async function loadNotes() {
     if (!roomId) return;
@@ -206,29 +226,74 @@ export default function RoomDetail() {
     }
   }
 
+  // Upload photos ONE AT A TIME, but show the work as it happens:
+  //   - each picked file gets a tile immediately, from a local preview, marked uploading,
+  //   - it uploads and inserts, then its tile is removed and the real photo is reloaded,
+  //   - a per-file TIMEOUT means a stalled upload fails loudly instead of hanging the batch,
+  //   - one failed photo does not abort the rest; it stays visible as an error tile.
+  // This is the fix for "stuck on Uploading forever": there is now a real end to every file,
+  // and progress the tech can see, so nothing silently parks.
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const input = e.target;
     const files = Array.from(input.files ?? []);
+    input.value = '';   // reset now so the same file can be picked again later
     if (!files.length || !activeOrg || !claimId || !roomId) return;
-    setUploading(true);
-    try {
-      const pos = await getPositionIfEnabled(activeOrg.id);
-      for (const file of files) {
-        const path = await uploadMedia(file, { orgId: activeOrg.id, claimId, roomId });
-        await supabase.from('resto_media').insert({
+
+    // Seed a tile per file up front so the grid fills instantly with what is coming.
+    const items: { key: string; name: string; preview: string; file: File }[] = files.map(file => ({
+      key: crypto.randomUUID(), name: file.name, preview: URL.createObjectURL(file), file
+    }));
+    const tiles: Pending[] = items.map(it => ({ key: it.key, name: it.name, preview: it.preview, status: 'uploading' }));
+    setPending(p => [...tiles, ...p]);
+    setUploadTotal(t => t + files.length);
+
+    const pos = await getPositionIfEnabled(activeOrg.id);
+    let anyOk = false;
+
+    for (const it of items) {
+      try {
+        const path = await withTimeout(
+          uploadMedia(it.file, { orgId: activeOrg.id, claimId, roomId }),
+          UPLOAD_TIMEOUT_MS, 'Upload'
+        );
+        const { error } = await supabase.from('resto_media').insert({
           org_id: activeOrg.id, claim_id: claimId, room_id: roomId,
-          type: file.type.startsWith('video') ? 'video' : 'photo',
+          type: it.file.type.startsWith('video') ? 'video' : 'photo',
           storage_path: path, captured_at: new Date().toISOString(),
           lat: pos?.lat ?? null, lng: pos?.lng ?? null
         });
+        if (error) throw error;
+        anyOk = true;
+        // Done: drop this tile, free its preview, count it.
+        URL.revokeObjectURL(it.preview);
+        setPending(p => p.filter(x => x.key !== it.key));
+        setUploadDone(d => d + 1);
+      } catch (err: any) {
+        // Keep the tile, flip it to error, so the tech sees which one did not save.
+        setPending(p => p.map(x => x.key === it.key ? { ...x, status: 'error' } : x));
+        setUploadDone(d => d + 1);
       }
-      await loadMedia();
-    } catch (err: any) {
-      alert('Upload failed: ' + (err?.message ?? 'unknown'));
-    } finally {
-      setUploading(false);
-      input.value = '';
     }
+
+    // Pull in whatever actually saved. Errored tiles remain until dismissed.
+    if (anyOk) await loadMedia();
+
+    // If nothing is left uploading, reset the counters for the next batch.
+    setPending(p => {
+      if (p.some(x => x.status === 'uploading')) return p;
+      setUploadTotal(0); setUploadDone(0);
+      return p;
+    });
+  }
+
+  function dismissError(key: string) {
+    setPending(p => {
+      const hit = p.find(x => x.key === key);
+      if (hit) URL.revokeObjectURL(hit.preview);
+      const next = p.filter(x => x.key !== key);
+      if (!next.some(x => x.status === 'uploading')) { setUploadTotal(0); setUploadDone(0); }
+      return next;
+    });
   }
 
   // Keep the viewer's editable note in sync with whichever photo is open.
@@ -298,6 +363,9 @@ export default function RoomDetail() {
     ? 'The whole room is part of the loss. Turn a surface off if it was not affected, for example an unaffected floor under wet walls.'
     : `${joinList(outOfScope).charAt(0).toUpperCase() + joinList(outOfScope).slice(1)} ${outOfScope.length === 1 ? 'is' : 'are'} marked not in scope. Still shown on the documents for reference, but left out of the measurement totals and the estimate.`;
 
+  const errorCount = pending.filter(p => p.status === 'error').length;
+  const stillUploading = pending.filter(p => p.status === 'uploading').length;
+
   return (
     <div>
       <SubHeader title={room.name} />
@@ -358,19 +426,56 @@ export default function RoomDetail() {
             <input ref={libraryRef} type="file" accept="image/*,video/*"
                    multiple className="hidden" onChange={onPickFiles} />
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => cameraRef.current?.click()} disabled={uploading}
-                      className="btn-primary py-3 justify-center disabled:opacity-50">
+              <button onClick={() => cameraRef.current?.click()}
+                      className="btn-primary py-3 justify-center">
                 <Camera size={18} /> Take photo
               </button>
-              <button onClick={() => libraryRef.current?.click()} disabled={uploading}
-                      className="btn-soft py-3 justify-center disabled:opacity-50">
+              <button onClick={() => libraryRef.current?.click()}
+                      className="btn-soft py-3 justify-center">
                 <ImageIcon size={18} /> Upload
               </button>
             </div>
-            {uploading && <p className="text-[12px] text-sky-deep font-semibold mt-2 px-1">Uploading...</p>}
-            {media.length === 0 && <p className="text-gray-400 text-sm mt-3 px-1">No photos yet.</p>}
+
+            {/* Live progress: a real count while photos are landing, so nothing looks stuck. */}
+            {stillUploading > 0 && (
+              <div className="mt-3 flex items-center gap-2 px-1">
+                <span className="w-4 h-4 rounded-full border-2 border-sky border-t-transparent animate-spin" />
+                <span className="text-[12px] text-sky-deep font-semibold">
+                  Uploading {Math.min(uploadDone + 1, uploadTotal)} of {uploadTotal}...
+                </span>
+              </div>
+            )}
+            {stillUploading === 0 && errorCount > 0 && (
+              <div className="mt-3 flex items-center gap-2 px-1">
+                <TriangleAlert size={15} className="text-red-500 shrink-0" />
+                <span className="text-[12px] text-red-600 font-semibold">
+                  {errorCount} photo{errorCount === 1 ? '' : 's'} did not upload. Tap it to dismiss, then try again.
+                </span>
+              </div>
+            )}
+
+            {media.length === 0 && pending.length === 0 && <p className="text-gray-400 text-sm mt-3 px-1">No photos yet.</p>}
             {media.length > 0 && <p className="text-[11px] text-gray-400 mt-3 px-1">Tap a photo to view it or scan for mold.</p>}
+
             <div className="grid grid-cols-3 gap-2 mt-2">
+              {/* In-flight and failed tiles come first, from the local preview, so the tech
+                  watches each one resolve. A failed tile is tappable to dismiss. */}
+              {pending.map(p => (
+                <button key={p.key} onClick={() => p.status === 'error' && dismissError(p.key)}
+                        className="relative aspect-square rounded-xl overflow-hidden bg-gray-100">
+                  <img src={p.preview} className={`w-full h-full object-cover ${p.status === 'error' ? 'opacity-40' : 'opacity-70'}`} />
+                  {p.status === 'uploading' ? (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <span className="w-6 h-6 rounded-full border-2 border-white border-t-transparent animate-spin drop-shadow" />
+                    </span>
+                  ) : (
+                    <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-red-900/20">
+                      <TriangleAlert size={18} className="text-white drop-shadow" />
+                      <span className="text-[10px] font-bold text-white drop-shadow">Failed, tap to clear</span>
+                    </span>
+                  )}
+                </button>
+              ))}
               {media.map(m => {
                 const sc = scans[m.id];
                 return (

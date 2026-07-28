@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, AlertTriangle, ShieldQuestion } from 'lucide-react';
+import { ChevronLeft, AlertTriangle, ShieldQuestion, User } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useOrg } from '../context/OrgContext';
 import { SelectField, ChoiceCards, DateField, todayISO, type Option } from '../components/Pickers';
@@ -64,7 +64,7 @@ const CAUSES: Record<TypeOfLoss, Option[]> = {
     { value: 'Foundation seepage', label: 'Foundation seepage', desc: 'Commonly excluded as long-term seepage. Document any sudden trigger.' },
     { value: 'Sprinkler or fire suppression discharge', label: 'Sprinkler / fire suppression discharge' },
     { value: 'Sump pump failure', label: 'Sump pump failure', desc: 'Often needs a sump overflow endorsement.' },
-    { value: 'Unknown', label: 'Unknown', desc: 'Do not leave this on the claim. Unknown reads as gradual to an adjuster.' }
+    { value: 'Unknown', label: 'Unknown', desc: 'Do not leave this on the job. Unknown reads as gradual to an adjuster.' }
   ],
   fire: [
     { value: 'Cooking / kitchen', label: 'Cooking / kitchen' },
@@ -160,9 +160,9 @@ export default function EditClaim() {
 
   async function deleteClaim() {
     if (!claimId) return;
-    if (!confirm('Delete this entire claim? All its structures, rooms, photos, readings, contents, and reports will be permanently removed. This cannot be undone.')) return;
+    if (!confirm('Delete this entire job? All its structures, rooms, photos, readings, contents, and reports will be permanently removed. This cannot be undone.')) return;
     const { error } = await supabase.from('resto_claims').delete().eq('id', claimId);
-    if (error) { alert('Could not delete claim: ' + error.message); return; }
+    if (error) { alert('Could not delete job: ' + error.message); return; }
     nav('/');
   }
 
@@ -205,11 +205,11 @@ export default function EditClaim() {
     try {
       if (editing) {
         const { error } = await supabase.from('resto_claims').update(row).eq('id', claimId!);
-        if (error) { alert('Could not save claim: ' + error.message); return; }
+        if (error) { alert('Could not save job: ' + error.message); return; }
         return nav(`/claims/${claimId}`);
       }
       const { data, error } = await supabase.from('resto_claims').insert(row).select('id').single();
-      if (error) { alert('Could not create claim: ' + error.message); return; }
+      if (error) { alert('Could not create job: ' + error.message); return; }
       nav(data ? `/claims/${(data as { id: string }).id}` : '/');
     } finally {
       setSaving(false);
@@ -226,15 +226,21 @@ export default function EditClaim() {
         <button onClick={() => nav(-1)} className="w-9 h-9 rounded-xl bg-white/12 flex items-center justify-center mb-3 active:scale-95 transition">
           <ChevronLeft size={20} />
         </button>
-        <div className="font-display font-bold text-xl">{editing ? 'Edit Claim' : 'New Claim'}</div>
+        <div className="font-display font-bold text-xl">{editing ? 'Edit Job' : 'New Job'}</div>
       </div>
 
       <div className="p-4 space-y-3 pb-28">
-        <Head>Identifiers</Head>
-        <TextField label="Carrier identifier / Job #" value={val('carrier_identifier')} onChange={set('carrier_identifier')} hint="This is the claim number in Xactimate." />
-        <TextField label="Contractor identifier" value={val('contractor_identifier')} onChange={set('contractor_identifier')} />
-        <TextField label="Assignment identifier" value={val('assignment_identifier')} onChange={set('assignment_identifier')} />
-        <TextField label="Address" value={val('address')} onChange={set('address')} />
+        {/* ---- The job. Customer and address first, because this is how a tech thinks
+             about the job and it is what names it everywhere in the app. ---- */}
+        <div className="pt-1 font-bold text-sm flex items-center gap-1.5">
+          <User size={15} className="text-sky-deep" /> Customer &amp; property
+        </div>
+        <TextField label="Customer name" value={val('policyholder_name')} onChange={set('policyholder_name')}
+          placeholder="e.g. John Smith" hint="This is what the job is called throughout the app." />
+        <TextField label="Property address" value={val('address')} onChange={set('address')}
+          placeholder="e.g. 123 Maple St" hint="Where the work is. Used as the job name if there is no customer name." />
+        <TextField label="Customer phone" type="tel" value={val('policyholder_phone')} onChange={set('policyholder_phone')} />
+        <TextField label="Customer email" type="email" value={val('policyholder_email')} onChange={set('policyholder_email')} />
 
         {/* ---- Cause & Origin: the coverage decision lives here ---- */}
         <div className="pt-3 font-bold text-sm flex items-center gap-1.5">
@@ -342,12 +348,11 @@ export default function EditClaim() {
           <DateField label="Inspected" value={val('date_inspected')} onChange={setOrNull('date_inspected')} max={today} />
         </div>
 
-        <Head>Policyholder</Head>
-        <TextField label="Name" value={val('policyholder_name')} onChange={set('policyholder_name')} />
-        <TextField label="Email" type="email" value={val('policyholder_email')} onChange={set('policyholder_email')} />
-        <TextField label="Phone" type="tel" value={val('policyholder_phone')} onChange={set('policyholder_phone')} />
-
+        {/* ---- Insurance. This is where carrier vocabulary belongs, because this section
+             is literally about the insurance side of the job. ---- */}
         <Head>Insurance</Head>
+        <p className="text-[11px] text-gray-400 -mt-1">The carrier and claim details. Leave blank if this is not an insurance job.</p>
+        <TextField label="Claim number / Job #" value={val('carrier_identifier')} onChange={set('carrier_identifier')} hint="The claim number the carrier uses. Also the claim number in Xactimate." />
         <TextField label="Insurance company" value={val('insurance_company')} onChange={set('insurance_company')} />
         <TextField label="Broker / agent" value={val('broker_agent')} onChange={set('broker_agent')} />
         <TextField label="Project manager" value={val('project_manager')} onChange={set('project_manager')} />
@@ -355,6 +360,8 @@ export default function EditClaim() {
         <TextField label="Estimator" value={val('estimator')} onChange={set('estimator')} hint="Required by Xactimate alongside the claim rep." />
         <TextField label="Policy number" value={val('policy_number')} onChange={set('policy_number')} />
         <TextField label="CAT code" value={val('cat_code')} onChange={set('cat_code')} />
+        <TextField label="Contractor identifier" value={val('contractor_identifier')} onChange={set('contractor_identifier')} />
+        <TextField label="Assignment identifier" value={val('assignment_identifier')} onChange={set('assignment_identifier')} />
 
         <SelectField
           label="Policy type"
@@ -410,11 +417,11 @@ export default function EditClaim() {
         )}
 
         <button onClick={save} disabled={saving} className="btn-primary w-full py-3.5 mt-2 disabled:opacity-50">
-          {saving ? 'Saving...' : 'Save Claim'}
+          {saving ? 'Saving...' : 'Save Job'}
         </button>
         {claimId && (
           <button onClick={deleteClaim} className="w-full py-3 mt-1 text-sm font-semibold text-red-600 border border-red-200 rounded-xl active:bg-red-50">
-            Delete claim
+            Delete job
           </button>
         )}
       </div>

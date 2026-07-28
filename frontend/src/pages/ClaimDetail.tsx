@@ -92,7 +92,7 @@ export default function ClaimDetail() {
   }
 
   if (!ready) return <Loader />;
-  if (!claim) return <div className="p-4 text-gray-400">Claim not found.</div>;
+  if (!claim) return <div className="p-4 text-gray-400">Job not found.</div>;
 
   const chip = lossChip(claim.type_of_loss);
   const Action = ({ icon: Icon, label, to }: { icon: any; label: string; to: string }) => (
@@ -108,8 +108,8 @@ export default function ClaimDetail() {
         <button onClick={() => nav('/')} className="w-9 h-9 rounded-xl bg-white/12 flex items-center justify-center mb-3 active:scale-95 transition">
           <ChevronLeft size={20} />
         </button>
-        <div className="font-display font-bold text-[21px] leading-tight">{claim.policyholder_name ?? 'Unnamed claim'}</div>
-        {claim.address && <div className="opacity-75 text-[13px] font-medium mt-0.5">{claim.address}</div>}
+        <div className="font-display font-bold text-[21px] leading-tight">{claim.policyholder_name || claim.address || 'Untitled job'}</div>
+        {claim.address && claim.policyholder_name && <div className="opacity-75 text-[13px] font-medium mt-0.5">{claim.address}</div>}
 
         <div className="flex flex-wrap gap-2 mt-3">
           {chip && (
