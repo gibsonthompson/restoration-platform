@@ -11,15 +11,21 @@ export function WetAreaSheet(
   const surface = wa.surface ?? 'floor';
   const dims = roomDimensions(scene, ceilingFt);
   const surfaceMax = surface === 'floor' ? dims.F : surface === 'ceiling' ? dims.C : dims.grossWallSF;
+  const cap = surfaceMax > 0 ? Math.round(surfaceMax * 100) / 100 : Infinity;
   const drawn = surface === 'floor' ? wetSqFt({ ...wa, sqft: undefined }) : 0;
-  const shownSqft = wa.sqft != null ? wa.sqft : (surface === 'floor' && drawn > 0 ? Math.round(drawn) : undefined);
-  const overCap = surfaceMax > 0 && shownSqft != null && shownSqft > surfaceMax + 0.5;
+  // Never surface a number bigger than the surface itself. A brush ribbon can cover more
+  // than the floor it sits on, and a stored value can outlive the room being shrunk, so the
+  // DISPLAYED value is always capped, whatever its source. Billing is capped the same way in
+  // the report, so what the tech sees here is what goes on the estimate.
+  const rawSqft = wa.sqft != null ? wa.sqft : (surface === 'floor' && drawn > 0 ? Math.round(drawn) : undefined);
+  const shownSqft = rawSqft != null ? Math.min(rawSqft, cap) : undefined;
+  const isPrefill = wa.sqft == null && surface === 'floor' && drawn > 0;
+  const drawnOverflowed = isPrefill && drawn > cap + 0.5;
 
   const setSqft = (raw: string) => {
     const n = parseFloat(raw);
     if (raw.trim() === '' || isNaN(n) || n <= 0) { onPatch({ sqft: undefined }); return; }
-    const capped = surfaceMax > 0 ? Math.min(n, Math.round(surfaceMax * 100) / 100) : n;
-    onPatch({ sqft: capped });
+    onPatch({ sqft: Math.min(n, cap) });
   };
 
   return (
@@ -44,10 +50,11 @@ export function WetAreaSheet(
         {surfaceMax > 0 && (
           <p className="text-[10px] text-gray-400 mt-1">{surface[0].toUpperCase() + surface.slice(1)} is {surfaceMax} sq ft. Enter only the wet portion.</p>
         )}
-        {overCap && <p className="text-[10px] text-amber-600 mt-1">Capped to the {surface} area.</p>}
-        {surface === 'floor' && drawn > 0 && wa.sqft == null && (
+        {drawnOverflowed ? (
+          <p className="text-[10px] text-amber-600 mt-1">Your drawing covered the whole {surface}, so this is set to {cap} sq ft. Lower it to the actual wet area.</p>
+        ) : isPrefill ? (
           <p className="text-[10px] text-gray-400 mt-1">Pre-filled from your drawing. Change it to the measured wet area.</p>
-        )}
+        ) : null}
 
         <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-4">Surface</label>
         <div className="flex bg-gray-100 rounded-full p-0.5 mt-1">
