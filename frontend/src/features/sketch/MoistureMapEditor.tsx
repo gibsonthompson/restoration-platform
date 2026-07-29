@@ -5,6 +5,7 @@ import { SceneLayers, EquipIcon } from './SceneLayers';
 import { RoomDimensions } from './RoomDimensions';
 import { MeasureSheet } from './MeasureSheet';
 import { RoomSizeSheet } from './RoomSizeSheet';
+import { WetAreaSheet } from './WetAreaSheet';
 import { formatFeetInches } from '../../lib/feetInches';
 import { viewTransform, screenToScene, panDelta, normRot, type View as VView } from './viewTransform';
 import {
@@ -254,7 +255,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
   const inited = useRef(false);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null);
-  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; openingTap?: string; edgeTap?: { wallId: string; edge: number }; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end'; floodGrab?: number }>(
+  const g = useRef<{ kind: GKind; downPx: Pt; lastPx: Pt; moved: boolean; id?: string; idx?: number; editId?: string; wallTap?: string; wetTap?: string; openingTap?: string; edgeTap?: { wallId: string; edge: number }; downScene?: Pt; grab?: Pt; floodEdge?: { wallId: string; edge: number }; floodWhich?: 'start' | 'end'; floodGrab?: number }>(
     { kind: 'idle', downPx: [0, 0], lastPx: [0, 0], moved: false });
   const pdrag = useRef<{ id: number; kind: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
@@ -340,6 +341,19 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     }
     return null;
   }
+  // Tap a FINISHED wet area (its painted stroke) to reopen its sheet in Move mode, so a
+  // stroke stays editable after it is done. Tests every stroke segment against the finger.
+  function hitWetArea(s: Pt): string | null {
+    const thr = (WET_BRUSH / 2 + 12) / viewRef.current.k;
+    for (const wa of scene.wetAreas) {
+      const strokes = wa.strokes ?? (wa.points.length ? [wa.points] : []);
+      for (const st of strokes) {
+        if (st.length === 1) { if (Math.hypot(st[0][0] - s[0], st[0][1] - s[1]) < thr) return wa.id; continue; }
+        for (let i = 0; i < st.length - 1; i++) if (distToSeg(s, st[i], st[i + 1]) < thr) return wa.id;
+      }
+    }
+    return null;
+  }
 
   function snapshot() { setHistory(h => [...h.slice(-29), scene]); setDirty(true); }
   function undo() { setHistory(h => { if (!h.length) return h; setScene(h[h.length - 1]); setSelectedId(null); setSelEdge(null); return h.slice(0, -1); }); }
@@ -383,15 +397,17 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     const px = toPixel(e.clientX, e.clientY); const s = pxToScene(px);
     const pxO = toPixel(e.clientX - OFF, e.clientY - OFF); const sO = pxToScene(pxO);
     g.current.downPx = px; g.current.lastPx = px; g.current.moved = false; g.current.downScene = sO; g.current.grab = undefined;
-    g.current.edgeTap = undefined;
+    g.current.edgeTap = undefined; g.current.wetTap = undefined;
 
     if (tool === 'move') {
       const h = hitHandle(s);
       const ep = h ? null : hitEquipment(scene, s[0], s[1]);
       const mp = h || ep ? null : hitPoint(scene, s[0], s[1]);
+      const wetHit = h || ep || mp ? null : hitWetArea(s);
       if (h) { snapshot(); g.current.kind = 'handle'; g.current.id = h.id; g.current.idx = h.idx; setSelectedId(null); setSelEdge(null); const c = scene.walls.find(w => w.id === h.id)!.points[h.idx]; g.current.grab = [c[0] - sO[0], c[1] - sO[1]]; showActive([c[0], c[1]], pxO, { id: h.id, idx: h.idx }); }
       else if (ep) { snapshot(); setSelectedId(ep.id); setSelEdge(null); g.current.kind = 'dragEquip'; g.current.id = ep.id; g.current.grab = [ep.x - sO[0], ep.y - sO[1]]; showActive([ep.x, ep.y], pxO); }
       else if (mp) { snapshot(); setSelectedId(mp.id); setSelEdge(null); g.current.kind = 'dragPoint'; g.current.id = mp.id; g.current.grab = [mp.x - sO[0], mp.y - sO[1]]; showActive([mp.x, mp.y], pxO); }
+      else if (wetHit) { g.current.kind = 'pan'; g.current.wetTap = wetHit; setSelectedId(null); setSelEdge(null); }
       else {
         const opn = hitOpening(scene, s[0], s[1]);
         const ar = opn ? null : hitArrow(scene, s[0], s[1]);
@@ -570,6 +586,10 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       const pt = g.current.downScene, id = uid();
       snapshot(); setScene(sc => ({ ...sc, containments: [...(sc.containments ?? []), { id, x: pt[0], y: pt[1], widthFt: 3, heightFt: 8 }] }));
       setPendingContain({ id, isNew: true });
+    } else if (g.current.kind === 'pan' && !g.current.moved && g.current.wetTap) {
+      // TAP A FINISHED WET AREA in Move mode to reopen its sheet: material, affected sqft,
+      // disposition, or delete.
+      setPendingWetId(g.current.wetTap);
     } else if (g.current.kind === 'pan' && !g.current.moved && g.current.openingTap) {
       // TAP AN OPENING to edit it: change its type, width, height, or remove it.
       openOpeningEditor(g.current.openingTap);
@@ -585,7 +605,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
     } else if (g.current.kind === 'place' && active) {
       commitPlace(active.scene, g.current.editId);
     }
-    g.current.kind = 'idle'; g.current.id = undefined; g.current.idx = undefined; g.current.editId = undefined; g.current.wallTap = undefined; g.current.openingTap = undefined; g.current.edgeTap = undefined; g.current.downScene = undefined;
+    g.current.kind = 'idle'; g.current.id = undefined; g.current.idx = undefined; g.current.editId = undefined; g.current.wallTap = undefined; g.current.wetTap = undefined; g.current.openingTap = undefined; g.current.edgeTap = undefined; g.current.downScene = undefined;
     setActive(null); setGuide(null);
   }
 
@@ -1355,6 +1375,11 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
             <button onClick={finishWet} className="bg-gradient-to-br from-sky to-sky-deep text-white rounded-full px-7 py-3 text-sm font-extrabold shadow-lg active:scale-95">Done</button>
           </div>
         )}
+        {tool === 'move' && !selEdge && !selOpen && !selWall && !selectedId && scene.wetAreas.length > 0 && (
+          <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3 pointer-events-none">
+            <div className="bg-navy/85 text-white rounded-full px-4 py-2 text-[12px] font-bold">Tap a wet area to edit its material and sq ft</div>
+          </div>
+        )}
         {tool === 'room' && roomMode === 'rect' && (
           <div className="absolute left-0 right-0 bottom-3 flex items-center justify-center px-3">
             <button onClick={() => setSizeSheet(true)}
@@ -1514,7 +1539,7 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
       )}
 
       <div className="text-center text-[11px] font-medium text-white py-1.5 bg-navy/90">
-        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, or an OPENING to edit it.')}
+        {tool === 'move' && (selEdge ? 'Tap the button to type this wall\u2019s exact length.' : selOpen ? 'Tap the opening to edit its type and size, or the bin to remove it.' : selWall ? (scene.walls.length >= 2 ? 'Outline selected. Set its material, or split it into its own room.' : 'Outline selected. Tap Set material to tag it.') : 'Tap a WALL to set its length, a WET AREA to edit it, or an OPENING to edit it.')}
         {tool === 'room' && (roomMode === 'custom'
           ? (build ? (aim ? 'Drag the orange dot to aim the wall any direction. Its length stays fixed. Bring it onto the start corner to close, or Set corner to keep going.' : 'Add wall, type its length, then aim it. Close the room by aiming the last wall back onto the start corner.') : 'Tap the map to drop the first corner. Then each wall is a fixed length you aim any direction.')
           : 'Type the width and length and the room draws itself exactly.')}
@@ -1843,86 +1868,20 @@ export function MoistureMapEditor({ sketch, roomId, roomName, claimId, orgId, st
         );
       })()}
 
+      {/* AFFECTED MATERIAL sheet, now a standalone component. Opened right after painting a
+          wet area AND when a finished wet area is tapped in Move mode. */}
       {pendingWetId && (() => {
         const wa = scene.wetAreas.find(w => w.id === pendingWetId);
         if (!wa) return null;
-        const setWet = (patch: Partial<typeof wa>) => setScene(sc => ({ ...sc, wetAreas: sc.wetAreas.map(w => (w.id === pendingWetId ? { ...w, ...patch } : w)) }));
-        const surface = wa.surface ?? 'floor';
-        // Full surface area, so the affected number is shown against it and capped to it.
-        // Same roomDimensions the header uses, so the numbers match what the tech sees up top.
-        const wetDims = roomDimensions(scene, ceilingFt);
-        const surfaceMax = surface === 'floor' ? wetDims.F : surface === 'ceiling' ? wetDims.C : wetDims.grossWallSF;
-        // What the input shows: the tech's typed value if set, else the drawn estimate
-        // (floor brush) as a starting point, else blank. Walls and ceiling have nothing to
-        // draw, so the tech simply types the number.
-        const drawn = surface === 'floor' ? wetSqFt({ ...wa, sqft: undefined }) : 0;
-        const shownSqft = wa.sqft != null ? wa.sqft : (surface === 'floor' && drawn > 0 ? Math.round(drawn) : undefined);
-        const overCap = surfaceMax > 0 && shownSqft != null && shownSqft > surfaceMax + 0.5;
-        const setSqft = (raw: string) => {
-          const n = parseFloat(raw);
-          if (raw.trim() === '' || isNaN(n) || n <= 0) { setWet({ sqft: undefined }); return; }
-          const capped = surfaceMax > 0 ? Math.min(n, Math.round(surfaceMax * 100) / 100) : n;
-          setWet({ sqft: capped });
-        };
         return (
-          <div className="fixed inset-0 z-[60] flex items-start justify-center px-6" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
-            <div className="absolute inset-0 bg-navy/30" onClick={() => setPendingWetId(null)} />
-            <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4">
-              <div className="font-display font-bold text-lg text-navy">Affected material</div>
-              <p className="text-xs text-gray-400 mt-0.5">Tag this wet area for the drying log and estimate.</p>
-              <div className="flex bg-gray-100 rounded-full p-0.5 mt-3">
-                {WET_SURFACES.map(sf => (
-                  <button key={sf} onClick={() => setWet({ surface: sf, material: MATERIALS_BY_SURFACE[sf].includes(wa.material ?? '') ? wa.material : undefined })} className={`flex-1 py-1.5 rounded-full text-xs font-bold capitalize ${(wa.surface ?? 'floor') === sf ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{sf}</button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {MATERIALS_BY_SURFACE[wa.surface ?? 'floor'].map(m => (
-                  <button key={m} onClick={() => setWet({ material: m })} className={`px-3 py-1.5 rounded-full text-[13px] font-semibold ${wa.material === m ? 'bg-sky text-white' : 'bg-sky-soft text-sky-deep'}`}>{m}</button>
-                ))}
-              </div>
-              <input value={wa.material ?? ''} onChange={e => setWet({ material: e.target.value })}
-                placeholder="Or type a material name" className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 mt-3 text-[16px] focus:outline-none focus:border-sky" />
-
-              {/* AFFECTED SQUARE FOOTAGE. Floor starts from the drawn area (confirm or
-                  correct it); walls and ceiling are typed, since there is nothing to draw.
-                  Capped at the full surface, so an affected number can only reduce from it. */}
-              <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-4">Affected area</label>
-              <div className="flex gap-2 mt-1 items-center">
-                <input
-                  value={shownSqft != null ? String(shownSqft) : ''}
-                  onChange={e => setSqft(e.target.value)}
-                  inputMode="decimal"
-                  placeholder={surface === 'floor' ? 'Confirm the wet floor area' : `How much ${surface} is wet`}
-                  className="flex-1 border border-gray-200 rounded-xl px-3.5 py-2.5 text-[16px] font-bold focus:outline-none focus:border-sky" />
-                <span className="text-xs text-gray-400">sq ft</span>
-              </div>
-              {surfaceMax > 0 && (
-                <p className="text-[10px] text-gray-400 mt-1">
-                  {surface[0].toUpperCase() + surface.slice(1)} is {surfaceMax} sq ft. Enter only the wet portion.
-                </p>
-              )}
-              {overCap && (
-                <p className="text-[10px] text-amber-600 mt-1">Capped to the {surface} area.</p>
-              )}
-              {surface === 'floor' && drawn > 0 && wa.sqft == null && (
-                <p className="text-[10px] text-gray-400 mt-1">From your drawing. Tap to change it to the measured wet area.</p>
-              )}
-
-              {(wa.surface ?? 'floor') === 'floor' && (
-                <>
-                  <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-3">Flooring plan</label>
-                  <div className="flex bg-gray-100 rounded-full p-0.5 mt-1">
-                    {([['dry', 'Dry in place'], ['remove', 'Remove / tear out']] as [string, string][]).map(([val, lbl]) => (
-                      <button key={val} onClick={() => setWet({ disposition: val as 'dry' | 'remove' })}
-                        className={`flex-1 py-1.5 rounded-full text-xs font-bold ${(wa.disposition ?? 'dry') === val ? 'bg-white shadow-sm text-sky' : 'text-gray-500'}`}>{lbl}</button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-gray-400 mt-1">Dry in place bills water extraction. Remove bills flooring tear-out.</p>
-                </>
-              )}
-              <button onClick={() => setPendingWetId(null)} className="btn-primary w-full py-3 justify-center mt-4">Done</button>
-            </div>
-          </div>
+          <WetAreaSheet
+            scene={scene}
+            wa={wa}
+            ceilingFt={ceilingFt}
+            onPatch={patch => setScene(sc => ({ ...sc, wetAreas: sc.wetAreas.map(w => w.id === pendingWetId ? { ...w, ...patch } : w) }))}
+            onDelete={() => { setScene(sc => ({ ...sc, wetAreas: sc.wetAreas.filter(w => w.id !== pendingWetId) })); setPendingWetId(null); }}
+            onClose={() => setPendingWetId(null)}
+          />
         );
       })()}
 
