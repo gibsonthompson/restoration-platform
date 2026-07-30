@@ -20,6 +20,10 @@ import { supabase } from '../lib/supabase';
   pass `src` (drop files in public/site/). The logo is a text <Wordmark/> until a
   real ScopeBook SVG exists (the old file is a RestoMate wordmark and cannot be
   reused). Design tokens match the app. Signup logic is untouched.
+
+  MOBILE: sections use tighter vertical rhythm on phones (py-14) that opens up on
+  sm+ (py-20). The comparison table becomes stacked per-dimension cards under md,
+  so nothing scrolls sideways. The header CTA stays visible at every width.
 */
 
 function Wordmark({ light = false, className = '' }: { light?: boolean; className?: string }) {
@@ -147,6 +151,19 @@ export default function Landing() {
 
   const nav_links: [string, string][] = [['How It Works', 'how'], ['Claim Defense', 'defense'], ['Xactimate', 'xactimate'], ['Compare', 'compare'], ['Pricing', 'pricing'], ['FAQ', 'faq']];
 
+  // Comparison data, hoisted so the desktop table and the mobile card stack share one source.
+  const compareCols = ['ScopeBook', 'Encircle', 'DocuSketch', 'magicplan'];
+  const compareRows: [string, string, string, string, string][] = [
+    ['Pricing model', 'Flat, unlimited jobs & users', 'Flat, by shop size', 'Per project + per sketch', 'Per project (+ overage)'],
+    ['Cost as job volume grows', 'Stays flat', 'Stays flat', 'Climbs with sketches', 'Climbs with projects'],
+    ['Hardware required', 'None (phone or tablet)', 'None', '360\u00b0 camera kit', 'None'],
+    ['Drying & psychrometrics (S500)', 'Yes, daily log + GPP', 'Yes', 'Not yet', 'Moisture mapping only'],
+    ['Pre-submission claim audit', 'Yes, Claim Defense', 'No', 'No', 'No'],
+    ['Photos, contents, e-signatures', 'Yes', 'Yes', 'Yes', 'Yes'],
+    ['Works offline in the field', 'Yes', 'Yes', 'Yes', 'Yes'],
+    ['Unlimited users', 'Yes', 'Yes', 'Per-office fees', 'Yes']
+  ];
+
   return (
     <div className="h-[100dvh] overflow-y-auto bg-white text-navy">
       {/* nav */}
@@ -156,29 +173,29 @@ export default function Landing() {
           <nav className="hidden md:flex items-center gap-6 text-[13px] font-semibold text-gray-500">
             {nav_links.map(([l, id]) => <button key={id} onClick={() => scrollToId(id)} className="hover:text-navy transition">{l}</button>)}
           </nav>
-          <div className="flex items-center gap-4 text-sm">
+          <div className="flex items-center gap-3 sm:gap-4 text-sm">
             <Link to="/login" className="font-semibold text-gray-500 hover:text-navy">Sign In</Link>
-            <button onClick={scrollToSignup} className="hidden sm:inline-flex bg-navy text-white font-semibold rounded-lg px-4 py-2 hover:bg-navy-soft transition">Start Free</button>
+            <button onClick={scrollToSignup} className="inline-flex bg-navy text-white font-semibold rounded-lg px-3 py-1.5 text-[13px] sm:px-4 sm:py-2 sm:text-sm hover:bg-navy-soft transition">Start Free</button>
           </div>
         </div>
       </header>
 
       {/* HERO */}
-      <section className="max-w-6xl mx-auto px-5 pt-14 pb-16 grid lg:grid-cols-[1.05fr_0.95fr] gap-12 lg:gap-10 items-center">
+      <section className="max-w-6xl mx-auto px-5 pt-10 pb-12 sm:pt-14 sm:pb-16 grid lg:grid-cols-[1.05fr_0.95fr] gap-10 sm:gap-12 lg:gap-10 items-center">
         <div>
           <Eyebrow>Water &middot; Fire &middot; Mold Field Documentation</Eyebrow>
-          <h1 className="font-display font-extrabold text-[40px] sm:text-[52px] leading-[1.03] tracking-tight">
+          <h1 className="font-display font-extrabold text-[34px] sm:text-[52px] leading-[1.05] sm:leading-[1.03] tracking-tight">
             Get Paid for the Whole Job, <span className="text-sky-deep">Not Most of It.</span>
           </h1>
-          <p className="text-[17px] text-gray-500 mt-5 leading-relaxed max-w-lg">
+          <p className="text-[16px] sm:text-[17px] text-gray-500 mt-4 sm:mt-5 leading-relaxed max-w-lg">
             On insurance work the estimate comes back light and justified line items get cut, so most shops quietly eat a 10 to 20% gap. ScopeBook documents every line in the field, moisture readings, photos, drying logs, F9 rationale, so it gets approved instead of reduced and you collect the full scope.
           </p>
-          <div id="signup" className="mt-7 max-w-xl scroll-mt-24">{signupCard}</div>
+          <div id="signup" className="mt-6 sm:mt-7 max-w-xl scroll-mt-20">{signupCard}</div>
           <p className="mt-4 text-[12px] font-semibold text-gray-400">Already have an account? <Link to="/login" className="text-sky-deep">Sign In</Link></p>
         </div>
 
         <div className="relative">
-          <Shot kind="photo" className="aspect-[4/5]"
+          <Shot kind="photo" className="aspect-[16/11] sm:aspect-[4/5]"
             label="Photo: Restoration Tech Using ScopeBook on a Tablet in a Gutted, Drying Room"
             file="/site/hero.jpg" />
           <div className="hidden sm:block absolute -bottom-5 -left-6 w-44">
@@ -187,31 +204,35 @@ export default function Landing() {
           <div className="hidden sm:flex absolute -top-3 -right-3 items-center gap-2 bg-white rounded-full shadow-soft px-3.5 py-2 text-[12px] font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-500" /> Claim Ready, 94/100
           </div>
+          {/* mobile-only proof pill, since the floating badge and phone shot are hidden on phones */}
+          <div className="sm:hidden mt-3 flex items-center justify-center gap-2 bg-navy/[0.04] rounded-full py-2 text-[12px] font-bold text-navy">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Claim Ready Score, 94/100 Before You Submit
+          </div>
         </div>
       </section>
 
       {/* credibility bar */}
       <section className="border-y border-gray-100 bg-navy text-white/80">
-        <div className="max-w-6xl mx-auto px-5 py-4 flex flex-wrap items-center justify-center gap-x-8 gap-y-1.5 text-[13px] font-semibold">
-          <span>Built Around IICRC S500 Drying</span><span className="text-white/25">/</span>
-          <span>Works Offline in the Field</span><span className="text-white/25">/</span>
-          <span>No 360 Camera to Buy</span><span className="text-white/25">/</span>
+        <div className="max-w-6xl mx-auto px-5 py-3.5 sm:py-4 flex flex-wrap items-center justify-center gap-x-6 sm:gap-x-8 gap-y-1.5 text-[12px] sm:text-[13px] font-semibold text-center">
+          <span>Built Around IICRC S500 Drying</span><span className="text-white/25 hidden sm:inline">/</span>
+          <span>Works Offline in the Field</span><span className="text-white/25 hidden sm:inline">/</span>
+          <span>No 360 Camera to Buy</span><span className="text-white/25 hidden sm:inline">/</span>
           <span>Unlimited Jobs &amp; Crew</span>
         </div>
       </section>
 
       {/* STORY */}
-      <section id="how" className="max-w-6xl mx-auto px-5 py-20 scroll-mt-16">
+      <section id="how" className="max-w-6xl mx-auto px-5 py-14 sm:py-20 scroll-mt-16">
         <div className="max-w-2xl">
           <Eyebrow>How It Works</Eyebrow>
-          <h2 className="font-display font-extrabold text-[30px] sm:text-[38px] leading-[1.06]">One Job, One File, From First Photo to Final Payment.</h2>
+          <h2 className="font-display font-extrabold text-[27px] sm:text-[38px] leading-[1.08] sm:leading-[1.06]">One Job, One File, From First Photo to Final Payment.</h2>
         </div>
 
         {/* 01 */}
-        <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-14">
+        <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-10 sm:mt-14">
           <div>
             <Eyebrow n="01">On-Site</Eyebrow>
-            <h3 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight">Document Every Line While You&rsquo;re Standing in It.</h3>
+            <h3 className="font-display font-bold text-[22px] sm:text-[28px] leading-tight">Document Every Line While You&rsquo;re Standing in It.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
               Moisture maps, flood cuts, containment, equipment placement, GPS and time-stamped photos, contents, and signatures, all on the phone the crew already carries. The proof that backs a supplement is captured as you work, not reconstructed from memory a week later.
             </p>
@@ -230,7 +251,7 @@ export default function Landing() {
         </div>
 
         {/* 03 */}
-        <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-24">
+        <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-16 sm:mt-24">
           <div className="order-2 lg:order-1 relative">
             <Shot kind="browser" label="Carrier-Ready Report & Share Link" file="/site/ui-report.png" />
             <div className="hidden sm:block absolute -bottom-6 -left-4 w-40">
@@ -239,7 +260,7 @@ export default function Landing() {
           </div>
           <div className="order-1 lg:order-2">
             <Eyebrow n="03">Handoff</Eyebrow>
-            <h3 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight">Hand the Adjuster a File That Backs Every Line.</h3>
+            <h3 className="font-display font-bold text-[22px] sm:text-[28px] leading-tight">Hand the Adjuster a File That Backs Every Line.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
               A branded report and a full daily drying log, sent as one clean link or PDF. Every reading, photo, and note lines up with the scope, so line items get approved instead of reduced, and supplements move instead of stalling.
             </p>
@@ -249,10 +270,10 @@ export default function Landing() {
 
       {/* 02 CLAIM DEFENSE (signature) */}
       <section id="defense" className="bg-navy text-white scroll-mt-16">
-        <div className="max-w-6xl mx-auto px-5 py-20 grid lg:grid-cols-2 gap-12 lg:gap-14 items-center">
+        <div className="max-w-6xl mx-auto px-5 py-14 sm:py-20 grid lg:grid-cols-2 gap-12 lg:gap-14 items-center">
           <div>
             <Eyebrow n="02"><span className="text-white/50">Before You Submit</span></Eyebrow>
-            <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.05]">Catch the Cut <span className="text-aqua">Before</span> the Carrier Does.</h2>
+            <h2 className="font-display font-extrabold text-[28px] sm:text-[40px] leading-[1.07] sm:leading-[1.05]">Catch the Cut <span className="text-aqua">Before</span> the Carrier Does.</h2>
             <p className="text-white/70 mt-4 leading-relaxed max-w-md">
               Carriers reduce or deny the same line items over and over, usually because the file is missing the one thing that justifies them. Before your file goes out, ScopeBook checks every commonly-cut line for its proof, the photo, the reading, the drying log, the F9 note, and shows you the gap. You close it, so the line gets approved instead of reduced.
             </p>
@@ -269,18 +290,18 @@ export default function Landing() {
               ))}
             </ul>
           </div>
-          <div className="mx-auto w-[270px]">
+          <div className="mx-auto w-[230px] sm:w-[270px]">
             <Shot kind="phone" label="Claim Readiness Audit, Full Screen" file="/site/ui-claim-readiness-full.png" />
           </div>
         </div>
       </section>
 
       {/* Drying & S500 */}
-      <section className="max-w-6xl mx-auto px-5 py-20">
+      <section className="max-w-6xl mx-auto px-5 py-14 sm:py-20">
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
           <div>
             <Eyebrow>Drying &amp; S500</Eyebrow>
-            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">A Drying Log That Justifies Every Equipment-Day.</h2>
+            <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">A Drying Log That Justifies Every Equipment-Day.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
               Set the chambers, drop your air movers and dehus, and log readings. ScopeBook runs the psychrometrics, tracks GPP toward the dry standard, and builds the daily log automatically, so the equipment-days on your invoice are backed by the numbers instead of argued over.
             </p>
@@ -296,11 +317,11 @@ export default function Landing() {
 
       {/* Xactimate */}
       <section id="xactimate" className="bg-sky-soft/30 scroll-mt-16">
-        <div className="max-w-6xl mx-auto px-5 py-20 grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+        <div className="max-w-6xl mx-auto px-5 py-14 sm:py-20 grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
           <div className="order-2 lg:order-1"><Shot kind="browser" label="Xactimate Sketch Underlay (Scaled, to Trace)" file="/site/ui-underlay.png" /></div>
           <div className="order-1 lg:order-2">
             <Eyebrow>Xactimate Handoff</Eyebrow>
-            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Feed Xactimate Without Re-Drawing the Job.</h2>
+            <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Feed Xactimate Without Re-Drawing the Job.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
               Export each level as a to-scale underlay with a calibration line, plus a room-by-room entry sheet of scope and quantities. Your estimator builds the estimate from real measurements, in the format adjusters approve faster and cut less, because they can compare it line by line.
             </p>
@@ -314,10 +335,10 @@ export default function Landing() {
 
       {/* crew photo band */}
       <section className="relative">
-        <Shot kind="photo" className="!rounded-none aspect-[16/7]" label="Photo: Crew Loading Air Movers From a Branded Van at Dawn" file="/site/crew.jpg" />
+        <Shot kind="photo" className="!rounded-none aspect-[3/2] sm:aspect-[16/7]" label="Photo: Crew Loading Air Movers From a Branded Van at Dawn" file="/site/crew.jpg" />
         <div className="absolute inset-0 bg-navy/55 flex items-center">
           <div className="max-w-6xl mx-auto px-5 w-full">
-            <p className="font-display font-extrabold text-white text-[26px] sm:text-[36px] leading-tight max-w-2xl">
+            <p className="font-display font-extrabold text-white text-[22px] sm:text-[36px] leading-tight max-w-2xl">
               You Did the Work. ScopeBook Makes Sure You Get Paid for It.
             </p>
           </div>
@@ -325,14 +346,14 @@ export default function Landing() {
       </section>
 
       {/* bento */}
-      <section className="max-w-6xl mx-auto px-5 py-20">
-        <div className="max-w-2xl mb-10">
+      <section className="max-w-6xl mx-auto px-5 py-14 sm:py-20">
+        <div className="max-w-2xl mb-8 sm:mb-10">
           <Eyebrow>All in One App</Eyebrow>
-          <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Everything the File Needs, Nothing the Office Has to Chase.</h2>
+          <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Everything the File Needs, Nothing the Office Has to Chase.</h2>
         </div>
         <div className="grid sm:grid-cols-3 gap-3">
           <div className="sm:row-span-2 card !p-0 overflow-hidden">
-            <Shot kind="photo" className="!rounded-none h-full min-h-[240px]" label="Photo: Tech Capturing a Room on a Phone" file="/site/capture-2.jpg" />
+            <Shot kind="photo" className="!rounded-none h-full min-h-[200px] sm:min-h-[240px]" label="Photo: Tech Capturing a Room on a Phone" file="/site/capture-2.jpg" />
           </div>
           {[
             ['Contents Inventory', 'Salvageable-vs-loss lists with photos, grouped by room.'],
@@ -352,71 +373,85 @@ export default function Landing() {
 
       {/* comparison */}
       <section id="compare" className="bg-sky-soft/30 scroll-mt-16">
-        <div className="max-w-6xl mx-auto px-5 py-20">
-          <div className="max-w-2xl mb-10">
+        <div className="max-w-6xl mx-auto px-5 py-14 sm:py-20">
+          <div className="max-w-2xl mb-8 sm:mb-10">
             <Eyebrow>How ScopeBook Compares</Eyebrow>
-            <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Built for a Shop That Documents Every Job.</h2>
+            <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Built for a Shop That Documents Every Job.</h2>
             <p className="text-gray-500 mt-2">Per-project and per-sketch tools get expensive the more you work. ScopeBook is flat and unlimited, with the whole file and the claim audit in one place.</p>
           </div>
 
-          <div className="card !p-0 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-[13px] border-collapse">
-                <thead>
-                  <tr>
-                    <th className="text-left font-bold text-gray-400 uppercase tracking-wide text-[11px] p-4 w-[26%]">What You Get</th>
-                    <th className="p-4 text-center align-bottom bg-sky-soft"><Wordmark className="text-[15px]" /></th>
-                    <th className="p-4 text-center align-bottom font-bold text-navy">Encircle</th>
-                    <th className="p-4 text-center align-bottom font-bold text-navy">DocuSketch</th>
-                    <th className="p-4 text-center align-bottom font-bold text-navy">magicplan</th>
+          {/* desktop: full table */}
+          <div className="card !p-0 overflow-hidden hidden md:block">
+            <table className="w-full text-[13px] border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-left font-bold text-gray-400 uppercase tracking-wide text-[11px] p-4 w-[26%]">What You Get</th>
+                  <th className="p-4 text-center align-bottom bg-sky-soft"><Wordmark className="text-[15px]" /></th>
+                  <th className="p-4 text-center align-bottom font-bold text-navy">Encircle</th>
+                  <th className="p-4 text-center align-bottom font-bold text-navy">DocuSketch</th>
+                  <th className="p-4 text-center align-bottom font-bold text-navy">magicplan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareRows.map(([dim, rm, en, ds, mp], i) => (
+                  <tr key={i} className="border-t border-gray-100">
+                    <td className="p-4 font-semibold text-gray-600">{dim}</td>
+                    <td className="p-4 text-center bg-sky-soft/40 font-bold text-navy">{rm}</td>
+                    <td className="p-4 text-center text-gray-500">{en}</td>
+                    <td className="p-4 text-center text-gray-500">{ds}</td>
+                    <td className="p-4 text-center text-gray-500">{mp}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ['Pricing model', 'Flat, unlimited jobs & users', 'Flat, by shop size', 'Per project + per sketch', 'Per project (+ overage)'],
-                    ['Cost as job volume grows', 'Stays flat', 'Stays flat', 'Climbs with sketches', 'Climbs with projects'],
-                    ['Hardware required', 'None (phone or tablet)', 'None', '360\u00b0 camera kit', 'None'],
-                    ['Drying & psychrometrics (S500)', 'Yes, daily log + GPP', 'Yes', 'Not yet', 'Moisture mapping only'],
-                    ['Pre-submission claim audit', 'Yes, Claim Defense', 'No', 'No', 'No'],
-                    ['Photos, contents, e-signatures', 'Yes', 'Yes', 'Yes', 'Yes'],
-                    ['Works offline in the field', 'Yes', 'Yes', 'Yes', 'Yes'],
-                    ['Unlimited users', 'Yes', 'Yes', 'Per-office fees', 'Yes']
-                  ].map(([dim, rm, en, ds, mp], i) => (
-                    <tr key={i} className="border-t border-gray-100">
-                      <td className="p-4 font-semibold text-gray-600">{dim}</td>
-                      <td className="p-4 text-center bg-sky-soft/40 font-bold text-navy">{rm}</td>
-                      <td className="p-4 text-center text-gray-500">{en}</td>
-                      <td className="p-4 text-center text-gray-500">{ds}</td>
-                      <td className="p-4 text-center text-gray-500">{mp}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
+
+          {/* mobile: one card per dimension, ScopeBook highlighted, no sideways scroll */}
+          <div className="space-y-3 md:hidden">
+            {compareRows.map((row, i) => {
+              const [dim, ...vals] = row;
+              return (
+                <div key={i} className="card !p-4">
+                  <div className="font-bold text-[13px] text-navy">{dim}</div>
+                  <div className="mt-2.5 space-y-1">
+                    {vals.map((v, j) => {
+                      const isUs = j === 0;
+                      return (
+                        <div key={j} className={`flex items-baseline justify-between gap-3 rounded-lg px-2.5 py-1.5 ${isUs ? 'bg-sky-soft' : ''}`}>
+                          <span className={`text-[12px] shrink-0 ${isUs ? 'font-extrabold text-sky-deep' : 'font-semibold text-gray-400'}`}>{compareCols[j]}</span>
+                          <span className={`text-[13px] text-right ${isUs ? 'font-bold text-navy' : 'text-gray-600'}`}>{v}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
           <p className="text-[11px] text-gray-400 mt-3">Competitor details compiled from public pricing and product pages, 2026. Verify current specifics with each vendor.</p>
         </div>
       </section>
 
       {/* pricing */}
-      <section id="pricing" className="max-w-6xl mx-auto px-5 py-20 scroll-mt-16">
-        <div className="max-w-2xl mb-10">
+      <section id="pricing" className="max-w-6xl mx-auto px-5 py-14 sm:py-20 scroll-mt-16">
+        <div className="max-w-2xl mb-8 sm:mb-10">
           <Eyebrow>Pricing</Eyebrow>
-          <h2 className="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">One Plan. Everything In. Unlimited Jobs.</h2>
+          <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">One Plan. Everything In. Unlimited Jobs.</h2>
           <p className="text-gray-500 mt-2">No tiers, no per-project fees, no hardware. Every feature, every crew member, every claim, one flat price.</p>
         </div>
 
         <div className="rounded-3xl bg-navy text-white overflow-hidden relative">
           <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-sky/20 blur-3xl" />
           <div className="relative grid lg:grid-cols-[0.9fr_1.1fr]">
-            <div className="p-8 sm:p-10 lg:border-r border-white/10">
+            <div className="p-7 sm:p-10 lg:border-r border-white/10">
               <div className="inline-flex items-center bg-white/10 rounded-full p-1 text-[13px] font-bold">
                 <button onClick={() => setBilling('monthly')} className={`px-4 py-1.5 rounded-full transition ${billing === 'monthly' ? 'bg-white text-navy' : 'text-white/70'}`}>Monthly</button>
                 <button onClick={() => setBilling('annual')} className={`px-4 py-1.5 rounded-full transition ${billing === 'annual' ? 'bg-white text-navy' : 'text-white/70'}`}>Annual</button>
               </div>
 
               <div className="mt-6 flex items-end gap-2">
-                <span className="font-display font-extrabold text-[54px] leading-none">{billing === 'annual' ? '$2,000' : '$249'}</span>
+                <span className="font-display font-extrabold text-[48px] sm:text-[54px] leading-none">{billing === 'annual' ? '$2,000' : '$249'}</span>
                 <span className="text-white/60 font-semibold mb-2">{billing === 'annual' ? '/year' : '/month'}</span>
               </div>
               <div className="mt-2 text-[13px] text-white/70">
@@ -435,7 +470,7 @@ export default function Landing() {
               <p className="text-[11px] text-white/50 mt-3 text-center">No hardware. No per-project fees. Cancel anytime.</p>
             </div>
 
-            <div className="p-8 sm:p-10">
+            <div className="p-7 sm:p-10">
               <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-white/50 mb-4">Everything Included</div>
               <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-[14px]">
                 {['Unlimited Claims', 'Unlimited Users & Crew', 'Field Capture & Moisture Maps', 'Drying & S500 Log', 'Contents Inventory', 'GPS Photo Proof', 'E-Signatures', 'Claim Defense Audit', 'Xactimate Underlay & Entry Sheet', 'Branded Carrier-Ready Reports', 'Offline Capture', 'Custom Branding'].map((f) => (
@@ -448,8 +483,8 @@ export default function Landing() {
       </section>
 
       {/* FAQ */}
-      <section id="faq" className="max-w-3xl mx-auto px-5 py-20 scroll-mt-16">
-        <div className="mb-9"><Eyebrow>Straight Answers</Eyebrow><h2 className="font-display font-extrabold text-[28px] sm:text-[34px]">Questions Owners Ask.</h2></div>
+      <section id="faq" className="max-w-3xl mx-auto px-5 py-14 sm:py-20 scroll-mt-16">
+        <div className="mb-8 sm:mb-9"><Eyebrow>Straight Answers</Eyebrow><h2 className="font-display font-extrabold text-[26px] sm:text-[34px]">Questions Owners Ask.</h2></div>
         <div className="space-y-3">
           {[
             ['Will this help my supplements get approved?', 'That is the point. Supplements get denied or delayed mostly for missing documentation. ScopeBook captures the readings, photos, drying logs, and F9 rationale that back each line, and flags what is missing before you submit.'],
@@ -470,12 +505,12 @@ export default function Landing() {
       </section>
 
       {/* final CTA */}
-      <section className="max-w-6xl mx-auto px-5 pb-20">
-        <div className="rounded-3xl bg-gradient-to-br from-navy-soft to-navy text-white p-9 sm:p-14 text-center relative overflow-hidden">
+      <section className="max-w-6xl mx-auto px-5 pb-14 sm:pb-20">
+        <div className="rounded-3xl bg-gradient-to-br from-navy-soft to-navy text-white p-8 sm:p-14 text-center relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-sky/20 blur-3xl" />
           <div className="relative">
-            <Wordmark light className="text-[30px] block mb-6" />
-            <h2 className="font-display font-extrabold text-[30px] sm:text-[40px] leading-[1.06] max-w-2xl mx-auto">Stop Eating the Gap. Document the Next Job Right.</h2>
+            <Wordmark light className="text-[28px] sm:text-[30px] block mb-6" />
+            <h2 className="font-display font-extrabold text-[27px] sm:text-[40px] leading-[1.08] sm:leading-[1.06] max-w-2xl mx-auto">Stop Eating the Gap. Document the Next Job Right.</h2>
             <p className="text-white/70 mt-4 max-w-lg mx-auto">Start with a 3-day free trial. Then $249/mo or $2,000/yr, unlimited jobs and crew, no hardware.</p>
             <button onClick={scrollToSignup} className="mt-7 bg-white text-navy font-bold rounded-xl px-7 py-3.5 active:scale-[0.99] inline-flex items-center gap-2">Start Your Free Trial <ArrowRight size={18} /></button>
           </div>
