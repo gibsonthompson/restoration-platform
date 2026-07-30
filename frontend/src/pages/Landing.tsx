@@ -80,11 +80,9 @@ function Shot({ kind, label, file, src, className = '' }: { kind: ShotKind; labe
   );
 }
 
-function Eyebrow({ n, children }: { n?: string; children: React.ReactNode }) {
+function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2.5 mb-4">
-      {n && <span className="font-display font-extrabold text-sky-deep text-[15px] tabular-nums">{n}</span>}
-      {n && <span className="h-px w-8 bg-sky/50" />}
+    <div className="mb-4">
       <span className="text-[12px] font-bold uppercase tracking-[0.14em] text-gray-400">{children}</span>
     </div>
   );
@@ -185,10 +183,10 @@ export default function Landing() {
         <div>
           <Eyebrow>Water &middot; Fire &middot; Mold Field Documentation</Eyebrow>
           <h1 className="font-display font-extrabold text-[34px] sm:text-[52px] leading-[1.05] sm:leading-[1.03] tracking-tight">
-            Get Paid for the Whole Job, <span className="text-sky-deep">Not Most of It.</span>
+            Document the Job. Prove the Claim. <span className="text-sky-deep">Get Paid.</span>
           </h1>
           <p className="text-[16px] sm:text-[17px] text-gray-500 mt-4 sm:mt-5 leading-relaxed max-w-lg">
-            On insurance work the estimate comes back light and justified line items get cut, so most shops quietly eat a 10 to 20% gap. ScopeBook documents every line in the field, moisture readings, photos, drying logs, F9 rationale, so it gets approved instead of reduced and you collect the full scope.
+            The whole restoration job, captured on-site. Moisture maps, readings, photos, and drying logs become one carrier-ready file, so line items get approved instead of cut and you collect the full scope.
           </p>
           <div id="signup" className="mt-6 sm:mt-7 max-w-xl scroll-mt-20">{signupCard}</div>
           <p className="mt-4 text-[12px] font-semibold text-gray-400">Already have an account? <Link to="/login" className="text-sky-deep">Sign In</Link></p>
@@ -231,7 +229,7 @@ export default function Landing() {
         {/* 01 */}
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-10 sm:mt-14">
           <div>
-            <Eyebrow n="01">On-Site</Eyebrow>
+            <Eyebrow>On-Site</Eyebrow>
             <h3 className="font-display font-bold text-[22px] sm:text-[28px] leading-tight">Document Every Line While You&rsquo;re Standing in It.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
               Moisture maps, flood cuts, containment, equipment placement, GPS and time-stamped photos, contents, and signatures, all on the phone the crew already carries. The proof that backs a supplement is captured as you work, not reconstructed from memory a week later.
@@ -259,7 +257,7 @@ export default function Landing() {
             </div>
           </div>
           <div className="order-1 lg:order-2">
-            <Eyebrow n="03">Handoff</Eyebrow>
+            <Eyebrow>Handoff</Eyebrow>
             <h3 className="font-display font-bold text-[22px] sm:text-[28px] leading-tight">Hand the Adjuster a File That Backs Every Line.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
               A branded report and a full daily drying log, sent as one clean link or PDF. Every reading, photo, and note lines up with the scope, so line items get approved instead of reduced, and supplements move instead of stalling.
@@ -272,7 +270,7 @@ export default function Landing() {
       <section id="defense" className="bg-navy text-white scroll-mt-16">
         <div className="max-w-6xl mx-auto px-5 py-14 sm:py-20 grid lg:grid-cols-2 gap-12 lg:gap-14 items-center">
           <div>
-            <Eyebrow n="02"><span className="text-white/50">Before You Submit</span></Eyebrow>
+            <Eyebrow><span className="text-white/50">Before You Submit</span></Eyebrow>
             <h2 className="font-display font-extrabold text-[28px] sm:text-[40px] leading-[1.07] sm:leading-[1.05]">Catch the Cut <span className="text-aqua">Before</span> the Carrier Does.</h2>
             <p className="text-white/70 mt-4 leading-relaxed max-w-md">
               Carriers reduce or deny the same line items over and over, usually because the file is missing the one thing that justifies them. Before your file goes out, ScopeBook checks every commonly-cut line for its proof, the photo, the reading, the drying log, the F9 note, and shows you the gap. You close it, so the line gets approved instead of reduced.
