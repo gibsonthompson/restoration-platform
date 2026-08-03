@@ -186,7 +186,7 @@ export default function Landing() {
             Document the Job. Prove the Claim. <span className="text-sky-deep">Get Paid.</span>
           </h1>
           <p className="text-[16px] sm:text-[17px] text-gray-500 mt-4 sm:mt-5 leading-relaxed max-w-lg">
-            The whole restoration job, captured on-site. Moisture maps, readings, photos, and drying logs become one carrier-ready file, so line items get approved instead of cut and you collect the full scope.
+            The whole restoration job, captured on-site. Moisture readings, photos, and drying logs become the proof each line needs, so the adjuster approves your scope instead of cutting it, and you collect the whole job.
           </p>
           <div id="signup" className="mt-6 sm:mt-7 max-w-xl scroll-mt-20">{signupCard}</div>
           <p className="mt-4 text-[12px] font-semibold text-gray-400">Already have an account? <Link to="/login" className="text-sky-deep">Sign In</Link></p>
@@ -219,11 +219,22 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* THE GAP (name the pain) */}
+      <section className="max-w-6xl mx-auto px-5 pt-14 sm:pt-20 pb-0">
+        <div className="max-w-3xl">
+          <Eyebrow>The Gap</Eyebrow>
+          <h2 className="font-display font-extrabold text-[27px] sm:text-[38px] leading-[1.08] sm:leading-[1.06]">You&rsquo;re Not Losing the Work. You&rsquo;re Losing the <span className="text-sky-deep">File.</span></h2>
+          <p className="text-[16px] sm:text-[17px] text-gray-500 mt-4 leading-relaxed">
+            The estimate comes back light, the same line items get cut, and most shops quietly eat 10 to 20%. It is rarely the work that was wrong. It is the file: the photo, the reading, or the drying log that backs the line is missing, because it got rebuilt from memory a week later. An adjuster does not pay you for the work. They pay you for what you can prove. Fix the file, and you fix the check.
+          </p>
+        </div>
+      </section>
+
       {/* STORY */}
       <section id="how" className="max-w-6xl mx-auto px-5 py-14 sm:py-20 scroll-mt-16">
         <div className="max-w-2xl">
           <Eyebrow>How It Works</Eyebrow>
-          <h2 className="font-display font-extrabold text-[27px] sm:text-[38px] leading-[1.08] sm:leading-[1.06]">One Job, One File, From First Photo to Final Payment.</h2>
+          <h2 className="font-display font-extrabold text-[27px] sm:text-[38px] leading-[1.08] sm:leading-[1.06]">Moisture Maps to Carrier Reports, From Your Phone.</h2>
         </div>
 
         {/* 01 */}
@@ -232,7 +243,7 @@ export default function Landing() {
             <Eyebrow>On-Site</Eyebrow>
             <h3 className="font-display font-bold text-[22px] sm:text-[28px] leading-tight">Document Every Line While You&rsquo;re Standing in It.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Moisture maps, flood cuts, containment, equipment placement, GPS and time-stamped photos, contents, and signatures, all on the phone the crew already carries. The proof that backs a supplement is captured as you work, not reconstructed from memory a week later.
+              Moisture readings, flood cuts, equipment placement, and GPS time-stamped photos, all on the phone the crew already carries, and fast enough they actually do it standing in a wet house. The proof that backs each line gets captured as you work, not rebuilt from memory a week later.
             </p>
             <div className="mt-5 flex flex-wrap gap-2 text-[12px] font-semibold text-navy">
               {['Moisture Readings', 'GPS Photo Proof', 'Contents Inventory', 'E-Signatures'].map((t) => (
@@ -260,7 +271,7 @@ export default function Landing() {
             <Eyebrow>Handoff</Eyebrow>
             <h3 className="font-display font-bold text-[22px] sm:text-[28px] leading-tight">Hand the Adjuster a File That Backs Every Line.</h3>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              A branded report and a full daily drying log, sent as one clean link or PDF. Every reading, photo, and note lines up with the scope, so line items get approved instead of reduced, and supplements move instead of stalling.
+              A branded report and full daily drying log, sent as one clean link or PDF, and clean enough the adjuster can verify every line in one pass. Readings, photos, and scope all line up, so items get approved instead of reduced and supplements move instead of stalling.
             </p>
           </div>
         </div>
@@ -301,7 +312,7 @@ export default function Landing() {
             <Eyebrow>Drying &amp; S500</Eyebrow>
             <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">A Drying Log That Justifies Every Equipment-Day.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Set the chambers, drop your air movers and dehus, and log readings. ScopeBook runs the psychrometrics, tracks GPP toward the dry standard, and builds the daily log automatically, so the equipment-days on your invoice are backed by the numbers instead of argued over.
+              Set the chambers, drop your air movers and dehus, and log readings at each point. ScopeBook builds the daily drying log for you and proves each material reached the dry standard, so every equipment-day on your invoice is backed by a reading instead of argued over. Carriers cut the days you cannot prove. This proves them.
             </p>
           </div>
           <div className="relative">
@@ -321,7 +332,7 @@ export default function Landing() {
             <Eyebrow>Xactimate Handoff</Eyebrow>
             <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Feed Xactimate Without Re-Drawing the Job.</h2>
             <p className="text-gray-500 mt-3 leading-relaxed">
-              Export each level as a to-scale underlay with a calibration line, plus a room-by-room entry sheet of scope and quantities. Your estimator builds the estimate from real measurements, in the format adjusters approve faster and cut less, because they can compare it line by line.
+              Export each level as a to-scale underlay with a calibration line, plus a room-by-room entry sheet of scope and quantities. Your estimator builds from real field measurements, not a fresh guess, in the format adjusters approve faster and cut less because they can check it line by line.
             </p>
             <div className="mt-5 grid sm:grid-cols-2 gap-3 text-[13px]">
               <div className="card !p-3.5"><div className="font-bold">Scaled Underlay</div><div className="text-gray-500 mt-0.5">Trace the rooms right over it.</div></div>
@@ -354,12 +365,12 @@ export default function Landing() {
             <Shot kind="photo" className="!rounded-none h-full min-h-[200px] sm:min-h-[240px]" label="Photo: Tech Capturing a Room on a Phone" file="/site/capture-2.jpg" />
           </div>
           {[
-            ['Contents Inventory', 'Salvageable-vs-loss lists with photos, grouped by room.'],
-            ['GPS Photo Proof', 'Every shot stamped with time and location.'],
-            ['Floor Plan Sketch', 'Draw each room to scale, snap the level together.'],
-            ['Offline Capture', 'Document in a dead basement; it syncs later.'],
-            ['E-Signatures', 'Authorizations and completion certs signed on-site.'],
-            ['Branded Reports', 'Your logo on the file the carrier reads.']
+            ['Contents Inventory', 'Salvageable-vs-loss lists with photos, so contents get paid instead of disputed.'],
+            ['GPS Photo Proof', 'Every shot stamped with time and place, so nobody can say you were not there.'],
+            ['Floor Plan Sketch', 'Rooms to scale, snapped together, so measurements hold up line by line.'],
+            ['Offline Capture', 'Document a dead basement now, it syncs the second you have signal.'],
+            ['E-Signatures', 'Authorizations and completion certs signed on-site, so the job is locked in.'],
+            ['Branded Reports', 'Your logo on the file the adjuster reads, so you look like the pro you are.']
           ].map(([t, d]) => (
             <div key={t} className="card !p-4">
               <div className="font-bold text-[14px]">{t}</div>
@@ -375,7 +386,7 @@ export default function Landing() {
           <div className="max-w-2xl mb-8 sm:mb-10">
             <Eyebrow>How ScopeBook Compares</Eyebrow>
             <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Built for a Shop That Documents Every Job.</h2>
-            <p className="text-gray-500 mt-2">Per-project and per-sketch tools get expensive the more you work. ScopeBook is flat and unlimited, with the whole file and the claim audit in one place.</p>
+            <p className="text-gray-500 mt-2">The more you document, the more per-project and per-sketch tools cost you. ScopeBook is flat and unlimited, with the whole file and the pre-submission claim audit in one place, so documenting every job never costs you more.</p>
           </div>
 
           {/* desktop: full table */}
@@ -436,7 +447,7 @@ export default function Landing() {
         <div className="max-w-2xl mb-8 sm:mb-10">
           <Eyebrow>Pricing</Eyebrow>
           <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">One Plan. Everything In. Unlimited Jobs.</h2>
-          <p className="text-gray-500 mt-2">No tiers, no per-project fees, no hardware. Every feature, every crew member, every claim, one flat price.</p>
+          <p className="text-gray-500 mt-2">No tiers, no per-project fees, no hardware. Every feature, every crew member, every claim, one flat price, so the shop that documents everything never gets punished for it.</p>
         </div>
 
         <div className="rounded-3xl bg-navy text-white overflow-hidden relative">
@@ -485,12 +496,12 @@ export default function Landing() {
         <div className="mb-8 sm:mb-9"><Eyebrow>Straight Answers</Eyebrow><h2 className="font-display font-extrabold text-[26px] sm:text-[34px]">Questions Owners Ask.</h2></div>
         <div className="space-y-3">
           {[
-            ['Will this help my supplements get approved?', 'That is the point. Supplements get denied or delayed mostly for missing documentation. ScopeBook captures the readings, photos, drying logs, and F9 rationale that back each line, and flags what is missing before you submit.'],
-            ['Does it work with Xactimate?', 'Yes. Export a to-scale underlay to trace in Xactimate plus a room-by-room entry sheet of scope and quantities to key in.'],
-            ['Do I need a 360 camera or any hardware?', 'No. ScopeBook runs on the phone or tablet the crew already carries. Nothing to buy, nothing to charge overnight.'],
-            ['Does it work offline in the field?', 'Yes. Document a job with no signal and it syncs automatically once you are back online.'],
-            ['Are there per-project or per-sketch fees?', 'No. One flat price, unlimited claims and unlimited crew. No overages, no rush charges, no per-sketch billing.'],
-            ['What losses is it built for?', 'Water, fire, and mold, from the first photo on-site through the carrier-ready file.']
+            ['Will this help my supplements get approved?', 'That is the whole point. Supplements stall or get denied mostly for missing documentation. ScopeBook captures the reading, photo, drying log, and F9 rationale that back each line as your crew works, and flags what is missing before you submit, so the line gets approved instead of cut.'],
+            ['Does it work with Xactimate?', 'Yes. Export a to-scale underlay to trace in Xactimate plus a room-by-room entry sheet of scope and quantities, so your estimator starts from real field measurements instead of a blank sketch.'],
+            ['Do I need a 360 camera or any hardware?', 'No. ScopeBook runs on the phone or tablet the crew already carries. Nothing to buy, nothing to charge overnight, nothing to leave at the shop.'],
+            ['Does it work offline in the field?', 'Yes. Document a job with no signal in a flooded basement, and it syncs automatically the moment you are back online.'],
+            ['Are there per-project or per-sketch fees?', 'No. One flat price, unlimited claims and unlimited crew. No overages, no rush charges, no per-sketch billing. Document every job without watching the meter.'],
+            ['What losses is it built for?', 'Water, fire, and mold, from the first photo on-site through the carrier-ready file that gets you paid.']
           ].map(([q, a], i) => (
             <details key={i} className="group card !p-0 overflow-hidden">
               <summary className="flex items-center justify-between gap-4 cursor-pointer list-none p-4 font-bold text-[15px]">
@@ -509,7 +520,7 @@ export default function Landing() {
           <div className="relative">
             <Wordmark light className="text-[28px] sm:text-[30px] block mb-6" />
             <h2 className="font-display font-extrabold text-[27px] sm:text-[40px] leading-[1.08] sm:leading-[1.06] max-w-2xl mx-auto">Stop Eating the Gap. Document the Next Job Right.</h2>
-            <p className="text-white/70 mt-4 max-w-lg mx-auto">Start with a 3-day free trial. Then $249/mo or $2,000/yr, unlimited jobs and crew, no hardware.</p>
+            <p className="text-white/70 mt-4 max-w-lg mx-auto">Document the next job so it gets paid in full. Start with a 3-day free trial, then $249/mo or $2,000/yr, unlimited jobs and crew, no hardware.</p>
             <button onClick={scrollToSignup} className="mt-7 bg-white text-navy font-bold rounded-xl px-7 py-3.5 active:scale-[0.99] inline-flex items-center gap-2">Start Your Free Trial <ArrowRight size={18} /></button>
           </div>
         </div>
@@ -520,7 +531,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-5 py-9 grid sm:grid-cols-2 gap-6 items-center">
           <div>
             <Wordmark className="text-[18px]" />
-            <p className="text-[13px] text-gray-400 mt-3 max-w-xs leading-relaxed">Field documentation and claim defense for water, fire, and mold restoration.</p>
+            <p className="text-[13px] text-gray-400 mt-3 max-w-xs leading-relaxed">The bridge between the crew and the carrier. Field documentation and claim defense for water, fire, and mold restoration.</p>
           </div>
           <div className="flex flex-wrap sm:justify-end gap-x-6 gap-y-2 text-sm text-gray-500">
             <button onClick={() => scrollToId('how')} className="hover:text-navy">How It Works</button>
