@@ -183,7 +183,7 @@ export default function Landing() {
         <div>
           <Eyebrow>Water &middot; Fire &middot; Mold Field Documentation</Eyebrow>
           <h1 className="font-display font-extrabold text-[34px] sm:text-[52px] leading-[1.05] sm:leading-[1.03] tracking-tight">
-            Document the Job. Prove the Claim. <span className="text-sky-deep">Get Paid.</span>
+            Prove the Whole Job.<br /><span className="text-sky-deep">Get Paid for All of It.</span>
           </h1>
           <p className="text-[16px] sm:text-[17px] text-gray-500 mt-4 sm:mt-5 leading-relaxed max-w-lg">
             The whole restoration job, captured on-site. Moisture readings, photos, and drying logs become the proof each line needs, so the adjuster approves your scope instead of cutting it, and you collect the whole job.
@@ -223,9 +223,9 @@ export default function Landing() {
       <section className="max-w-6xl mx-auto px-5 pt-14 sm:pt-20 pb-0">
         <div className="max-w-3xl">
           <Eyebrow>The Gap</Eyebrow>
-          <h2 className="font-display font-extrabold text-[27px] sm:text-[38px] leading-[1.08] sm:leading-[1.06]">You&rsquo;re Not Losing the Work. You&rsquo;re Losing the <span className="text-sky-deep">File.</span></h2>
+          <h2 className="font-display font-extrabold text-[27px] sm:text-[38px] leading-[1.08] sm:leading-[1.06]">Carriers Don&rsquo;t Cut Your Work.<br /><span className="text-sky-deep">They Cut Your Documentation.</span></h2>
           <p className="text-[16px] sm:text-[17px] text-gray-500 mt-4 leading-relaxed">
-            The estimate comes back light, the same line items get cut, and most shops quietly eat 10 to 20%. It is rarely the work that was wrong. It is the file: the photo, the reading, or the drying log that backs the line is missing, because it got rebuilt from memory a week later. An adjuster does not pay you for the work. They pay you for what you can prove. Fix the file, and you fix the check.
+            The estimate comes back light and the same line items get cut, so most companies quietly eat 10 to 20%. It is rarely the work that was wrong. It is the file: the photo, the reading, or the drying log that backs the line is missing, because it got rebuilt from memory a week later. An adjuster does not pay you for the work. They pay you for what you can prove. Fix the file, and you fix the check.
           </p>
         </div>
       </section>
@@ -447,7 +447,7 @@ export default function Landing() {
         <div className="max-w-2xl mb-8 sm:mb-10">
           <Eyebrow>Pricing</Eyebrow>
           <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">One Plan. Everything In. Unlimited Jobs.</h2>
-          <p className="text-gray-500 mt-2">No tiers, no per-project fees, no hardware. Every feature, every crew member, every claim, one flat price, so the shop that documents everything never gets punished for it.</p>
+          <p className="text-gray-500 mt-2">No tiers, no per-project fees, no hardware. Every feature, every crew member, every claim, one flat price, so documenting every job never costs you more.</p>
         </div>
 
         <div className="rounded-3xl bg-navy text-white overflow-hidden relative">
@@ -498,7 +498,7 @@ export default function Landing() {
           {[
             ['Will this help my supplements get approved?', 'That is the whole point. Supplements stall or get denied mostly for missing documentation. ScopeBook captures the reading, photo, drying log, and F9 rationale that back each line as your crew works, and flags what is missing before you submit, so the line gets approved instead of cut.'],
             ['Does it work with Xactimate?', 'Yes. Export a to-scale underlay to trace in Xactimate plus a room-by-room entry sheet of scope and quantities, so your estimator starts from real field measurements instead of a blank sketch.'],
-            ['Do I need a 360 camera or any hardware?', 'No. ScopeBook runs on the phone or tablet the crew already carries. Nothing to buy, nothing to charge overnight, nothing to leave at the shop.'],
+            ['Do I need a 360 camera or any hardware?', 'No. ScopeBook runs on the phone or tablet the crew already carries. Nothing to buy, nothing to charge overnight, nothing to forget in the truck.'],
             ['Does it work offline in the field?', 'Yes. Document a job with no signal in a flooded basement, and it syncs automatically the moment you are back online.'],
             ['Are there per-project or per-sketch fees?', 'No. One flat price, unlimited claims and unlimited crew. No overages, no rush charges, no per-sketch billing. Document every job without watching the meter.'],
             ['What losses is it built for?', 'Water, fire, and mold, from the first photo on-site through the carrier-ready file that gets you paid.']
