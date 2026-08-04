@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Check, ChevronDown, MailCheck, Image as ImageIcon, Smartphone, Monitor } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { Logo } from '../components/Loader';
 
 /*
   ScopeBook marketing / landing page.
@@ -17,26 +16,20 @@ import { Logo } from '../components/Loader';
   editorial, real photos and UI screenshots carry it, icons nearly absent.
   Headings/labels/nav/buttons are Title Case; body stays sentence case.
 
-  Every image is a <Shot/>: labeled placeholder now, real image the moment the
-  file exists at /site/<name>. Real photos live in public/site/.
-
-  LOGO: uses the same <Logo/> the app uses (components/Loader.tsx), which serves
-  /scopebook-logo.svg (color) and /scopebook-logo-white.svg (white) from public.
-  Nav + footer use the color logo on white; the navy final-CTA uses variant
-  white. The comparison table header keeps a small inline text mark, since a full
-  logo does not sit well inside a table cell.
+  Every image is a <Shot/>: labeled placeholder now, real image the moment you
+  pass `src` (drop files in public/site/). The logo is a text <Wordmark/> until a
+  real ScopeBook SVG exists (the old file is a RestoMate wordmark and cannot be
+  reused). Design tokens match the app. Signup logic is untouched.
 
   MOBILE: sections use tighter vertical rhythm on phones (py-14) that opens up on
   sm+ (py-20). The comparison table becomes stacked per-dimension cards under md,
   so nothing scrolls sideways. The header CTA stays visible at every width.
 */
 
-// Small inline text mark, used ONLY where a full logo image does not fit (the
-// comparison table header cell). Everywhere else uses the real <Logo/> SVG.
-function TextMark({ className = '' }: { className?: string }) {
+function Wordmark({ light = false, className = '' }: { light?: boolean; className?: string }) {
   return (
     <span className={`font-display font-extrabold tracking-tight leading-none ${className}`}>
-      <span className="text-navy">Scope</span><span className="text-sky-deep">Book</span>
+      <span className={light ? 'text-white' : 'text-navy'}>Scope</span><span className={light ? 'text-aqua' : 'text-sky-deep'}>Book</span>
     </span>
   );
 }
@@ -175,7 +168,7 @@ export default function Landing() {
       {/* nav */}
       <header className="sticky top-0 z-30 bg-white/85 backdrop-blur border-b border-gray-100">
         <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
-          <Link to="/welcome" className="flex items-center"><Logo className="h-7 w-auto" /></Link>
+          <Link to="/welcome" className="flex items-center"><Wordmark className="text-[22px]" /></Link>
           <nav className="hidden md:flex items-center gap-6 text-[13px] font-semibold text-gray-500">
             {nav_links.map(([l, id]) => <button key={id} onClick={() => scrollToId(id)} className="hover:text-navy transition">{l}</button>)}
           </nav>
@@ -202,8 +195,8 @@ export default function Landing() {
 
         <div className="relative">
           <Shot kind="photo" className="aspect-[16/11] sm:aspect-[4/5]"
-            label="Photo: Restoration Tech Logging Drying Equipment in ScopeBook"
-            file="/site/drying.jpg" />
+            label="Photo: Restoration Tech Using ScopeBook on a Tablet in a Gutted, Drying Room"
+            file="/site/hero.jpg" />
           <div className="hidden sm:block absolute -bottom-5 -left-6 w-44">
             <Shot kind="phone" label="Claim Readiness Score" file="/site/ui-claim-readiness.png" />
           </div>
@@ -260,7 +253,7 @@ export default function Landing() {
             </div>
           </div>
           <div className="relative">
-            <Shot kind="tablet" label="Moisture Map & Room Sketch" file="/site/ui-moisture-map.png" />
+            <div className="mx-auto w-[260px] sm:w-[300px]"><Shot kind="phone" label="Moisture Map & Room Sketch" file="/site/ui-moisture-map.png" /></div>
             <div className="hidden sm:block absolute -bottom-6 -right-4 w-40">
               <Shot kind="photo" className="aspect-[3/4]" label="Photo: Moisture Meter on Wet Drywall" file="/site/capture.jpg" />
             </div>
@@ -270,7 +263,7 @@ export default function Landing() {
         {/* 03 */}
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center mt-16 sm:mt-24">
           <div className="order-2 lg:order-1 relative">
-            <Shot kind="browser" label="Carrier-Ready Report & Share Link" file="/site/ui-report.png" />
+            <div className="mx-auto w-[260px] sm:w-[300px]"><Shot kind="phone" label="Carrier-Ready Report & Share Link" file="/site/ui-report.png" /></div>
             <div className="hidden sm:block absolute -bottom-6 -left-4 w-40">
               <Shot kind="photo" className="aspect-[4/3]" label="Photo: Owner Reviewing the File" file="/site/handoff.jpg" />
             </div>
@@ -324,9 +317,9 @@ export default function Landing() {
             </p>
           </div>
           <div className="relative">
-            <Shot kind="tablet" label="Daily Drying Log With GPP Chart" file="/site/ui-drying-log.png" />
+            <div className="mx-auto w-[260px] sm:w-[300px]"><Shot kind="phone" label="Daily Drying Log With GPP Chart" file="/site/ui-drying-log.png" /></div>
             <div className="hidden sm:block absolute -top-6 -right-4 w-36">
-              <Shot kind="photo" className="aspect-[3/4]" label="Photo: Photographing Wall Damage on a Phone" file="/site/capture-2.jpg" />
+              <Shot kind="photo" className="aspect-[3/4]" label="Photo: Logging Readings by a Dehumidifier" file="/site/drying.jpg" />
             </div>
           </div>
         </div>
@@ -335,7 +328,7 @@ export default function Landing() {
       {/* Xactimate */}
       <section id="xactimate" className="bg-sky-soft/30 scroll-mt-16">
         <div className="max-w-6xl mx-auto px-5 py-14 sm:py-20 grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
-          <div className="order-2 lg:order-1"><Shot kind="browser" label="Xactimate Sketch Underlay (Scaled, to Trace)" file="/site/ui-underlay.png" /></div>
+          <div className="order-2 lg:order-1"><div className="mx-auto w-[260px] sm:w-[300px]"><Shot kind="phone" label="Xactimate Sketch Underlay (Scaled, to Trace)" file="/site/ui-underlay.png" /></div></div>
           <div className="order-1 lg:order-2">
             <Eyebrow>Xactimate Handoff</Eyebrow>
             <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Feed Xactimate Without Re-Drawing the Job.</h2>
@@ -350,13 +343,13 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* homeowner-relief photo band */}
+      {/* crew photo band */}
       <section className="relative">
-        <Shot kind="photo" className="!rounded-none aspect-[3/2] sm:aspect-[16/7]" label="Photo: Technician Reassuring a Relieved Homeowner in a Water-Damaged Room" file="/site/handoff.jpg" />
+        <Shot kind="photo" className="!rounded-none aspect-[3/2] sm:aspect-[16/7]" label="Photo: Crew Loading Air Movers From a Branded Van at Dawn" file="/site/crew.jpg" />
         <div className="absolute inset-0 bg-navy/55 flex items-center">
           <div className="max-w-6xl mx-auto px-5 w-full">
             <p className="font-display font-extrabold text-white text-[22px] sm:text-[36px] leading-tight max-w-2xl">
-              Prove the Whole Job. Get Paid for All of It.
+              You Did the Work. ScopeBook Makes Sure You Get Paid for It.
             </p>
           </div>
         </div>
@@ -368,11 +361,9 @@ export default function Landing() {
           <Eyebrow>All in One App</Eyebrow>
           <h2 className="font-display font-extrabold text-[26px] sm:text-[34px] leading-tight">Everything the File Needs, Nothing the Office Has to Chase.</h2>
         </div>
-        {/* Photo spans the full height of the left column (all 3 rows); the six
-            cards fill a 2-wide block on the right with no empty gap. */}
-        <div className="grid sm:grid-cols-3 sm:grid-rows-3 gap-3">
-          <div className="sm:row-span-3 card !p-0 overflow-hidden min-h-[280px]">
-            <Shot kind="photo" className="!rounded-none h-full w-full" label="Photo: Tech Capturing a Room on a Phone" file="/site/capture-2.jpg" />
+        <div className="grid sm:grid-cols-3 gap-3">
+          <div className="sm:row-span-2 card !p-0 overflow-hidden">
+            <Shot kind="photo" className="!rounded-none h-full min-h-[200px] sm:min-h-[240px]" label="Photo: Tech Capturing a Room on a Phone" file="/site/capture-2.jpg" />
           </div>
           {[
             ['Contents Inventory', 'Salvageable-vs-loss lists with photos, so contents get paid instead of disputed.'],
@@ -405,7 +396,7 @@ export default function Landing() {
               <thead>
                 <tr>
                   <th className="text-left font-bold text-gray-400 uppercase tracking-wide text-[11px] p-4 w-[26%]">What You Get</th>
-                  <th className="p-4 text-center align-bottom bg-sky-soft"><TextMark className="text-[15px]" /></th>
+                  <th className="p-4 text-center align-bottom bg-sky-soft"><Wordmark className="text-[15px]" /></th>
                   <th className="p-4 text-center align-bottom font-bold text-navy">Encircle</th>
                   <th className="p-4 text-center align-bottom font-bold text-navy">DocuSketch</th>
                   <th className="p-4 text-center align-bottom font-bold text-navy">magicplan</th>
@@ -528,7 +519,7 @@ export default function Landing() {
         <div className="rounded-3xl bg-gradient-to-br from-navy-soft to-navy text-white p-8 sm:p-14 text-center relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-sky/20 blur-3xl" />
           <div className="relative">
-            <div className="flex justify-center mb-6"><Logo variant="white" className="h-8 sm:h-9 w-auto" /></div>
+            <Wordmark light className="text-[28px] sm:text-[30px] block mb-6" />
             <h2 className="font-display font-extrabold text-[27px] sm:text-[40px] leading-[1.08] sm:leading-[1.06] max-w-2xl mx-auto">Stop Eating the Gap. Document the Next Job Right.</h2>
             <p className="text-white/70 mt-4 max-w-lg mx-auto">Document the next job so it gets paid in full. Start with a 3-day free trial, then $249/mo or $2,000/yr, unlimited jobs and crew, no hardware.</p>
             <button onClick={scrollToSignup} className="mt-7 bg-white text-navy font-bold rounded-xl px-7 py-3.5 active:scale-[0.99] inline-flex items-center gap-2">Start Your Free Trial <ArrowRight size={18} /></button>
@@ -540,7 +531,7 @@ export default function Landing() {
       <footer className="border-t border-gray-100">
         <div className="max-w-6xl mx-auto px-5 py-9 grid sm:grid-cols-2 gap-6 items-center">
           <div>
-            <Logo className="h-6 w-auto" />
+            <Wordmark className="text-[18px]" />
             <p className="text-[13px] text-gray-400 mt-3 max-w-xs leading-relaxed">The bridge between the crew and the carrier. Field documentation and claim defense for water, fire, and mold restoration.</p>
           </div>
           <div className="flex flex-wrap sm:justify-end gap-x-6 gap-y-2 text-sm text-gray-500">
