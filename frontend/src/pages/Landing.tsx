@@ -18,7 +18,7 @@ import { supabase } from '../lib/supabase';
 
   Every image is a <Shot/>: labeled placeholder now, real image the moment you
   pass `src` (drop files in public/site/). The logo is a text <Wordmark/> until a
-  real ScopeBook SVG exists (the old file is a ScopeBook wordmark and cannot be
+  real ScopeBook SVG exists (the old file is a RestoMate wordmark and cannot be
   reused). Design tokens match the app. Signup logic is untouched.
 
   MOBILE: sections use tighter vertical rhythm on phones (py-14) that opens up on
@@ -43,7 +43,8 @@ function Shot({ kind, label, file, src, className = '' }: { kind: ShotKind; labe
       <div className="text-[10px] text-sky-deep/60 font-mono">{file}</div>
     </div>
   );
-  const inner = src ? <img src={src} alt={label} loading="lazy" className="w-full h-full object-cover" /> : placeholder;
+  const imgSrc = src || file;
+  const inner = imgSrc ? <img src={imgSrc} alt={label} loading="lazy" className="w-full h-full object-cover" /> : placeholder;
 
   if (kind === 'phone') {
     return (
