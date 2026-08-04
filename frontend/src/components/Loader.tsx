@@ -1,10 +1,10 @@
-// The DocuMate logo (icon + wordmark), served from /public so updating the SVG
+// The ScopeBook logo (icon + wordmark), served from /public so updating the SVG
 // changes it everywhere. `color` for light surfaces (loading screens), `white`
 // for dark ones (the navy app header, where the near-black "Docu" would vanish).
 export function Logo({ className = 'h-12 w-auto', variant = 'color' }:
   { className?: string; variant?: 'color' | 'white' }) {
-  const src = variant === 'white' ? '/restomate-logo-white.svg' : '/restomate-logo.svg';
-  return <img src={src} alt="DocuMate" className={className} />;
+  const src = variant === 'white' ? '/scopebook-logo-white.svg' : '/scopebook-logo.svg';
+  return <img src={src} alt="ScopeBook" className={className} />;
 }
 
 // In-page branded loading state: the full logo centered in the available space.

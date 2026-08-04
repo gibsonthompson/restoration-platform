@@ -31,7 +31,7 @@ export default function Login() {
     <div className="h-[100dvh] overflow-y-auto bg-gray-50 flex justify-center px-6 pb-10"
          style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8vh)' }}>
       <div className="w-full max-w-sm">
-        <img src="/restomate-logo.svg" alt="DocuMate" className="h-8 w-auto mb-9" />
+        <img src="/scopebook-logo.svg" alt="ScopeBook" className="h-8 w-auto mb-9" />
 
         <h1 className="text-2xl font-bold text-navy">Sign in</h1>
         <p className="text-sm text-gray-500 mt-1 mb-5">Welcome back. Sign in to your workspace.</p>

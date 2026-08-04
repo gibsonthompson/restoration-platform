@@ -64,7 +64,7 @@ export function InstallCard() {
         </div>
         <div>
           <div className="font-bold text-[15px]">Installed</div>
-          <div className="text-[12px] text-gray-500">DocuMate is running from your home screen.</div>
+          <div className="text-[12px] text-gray-500">ScopeBook is running from your home screen.</div>
         </div>
       </div>
     );
@@ -77,7 +77,7 @@ export function InstallCard() {
           <MonitorSmartphone size={20} />
         </div>
         <div>
-          <div className="font-bold text-[15px]">Add DocuMate to your home screen</div>
+          <div className="font-bold text-[15px]">Add ScopeBook to your home screen</div>
           <div className="text-[12px] text-gray-500">Opens full screen like an app, and loads faster in the field.</div>
         </div>
       </div>
@@ -87,7 +87,7 @@ export function InstallCard() {
           {[
             [<Share key="s" size={15} />, <>Tap the <span className="font-semibold">Share</span> button in Safari's toolbar.</>],
             [<PlusSquare key="p" size={15} />, <>Scroll and choose <span className="font-semibold">Add to Home Screen</span>.</>],
-            [<Check key="c" size={15} />, <>Tap <span className="font-semibold">Add</span>. DocuMate appears with your other apps.</>]
+            [<Check key="c" size={15} />, <>Tap <span className="font-semibold">Add</span>. ScopeBook appears with your other apps.</>]
           ].map(([icon, text], i) => (
             <li key={i} className="flex items-start gap-2.5 text-[13px] text-gray-600">
               <span className="w-6 h-6 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0 mt-px">{icon}</span>
@@ -98,7 +98,7 @@ export function InstallCard() {
         </ol>
       ) : canPrompt ? (
         <button onClick={promptInstall} className="btn-primary w-full mt-4 py-3">
-          <Download size={17} /> Install DocuMate
+          <Download size={17} /> Install ScopeBook
         </button>
       ) : (
         <p className="text-[12px] text-gray-500 mt-4 leading-relaxed">
@@ -114,14 +114,14 @@ export function InstallCard() {
 export function InstallBanner() {
   const { canPrompt, promptInstall, ios, installed } = useInstallState();
   const [hidden, setHidden] = useState(() => {
-    try { return sessionStorage.getItem('documate_install_dismissed') === '1'; } catch { return false; }
+    try { return sessionStorage.getItem('scopebook_install_dismissed') === '1'; } catch { return false; }
   });
 
   if (installed || hidden || (!canPrompt && !ios)) return null;
 
   const dismiss = () => {
     setHidden(true);
-    try { sessionStorage.setItem('documate_install_dismissed', '1'); } catch { /* private mode */ }
+    try { sessionStorage.setItem('scopebook_install_dismissed', '1'); } catch { /* private mode */ }
   };
 
   return (
@@ -129,8 +129,8 @@ export function InstallBanner() {
       <MonitorSmartphone size={17} className="shrink-0" />
       <div className="flex-1 text-[12px] leading-snug">
         {ios
-          ? <>Add DocuMate to your home screen: <span className="font-semibold">Share</span>, then <span className="font-semibold">Add to Home Screen</span>.</>
-          : <>Install DocuMate for full-screen access in the field.</>}
+          ? <>Add ScopeBook to your home screen: <span className="font-semibold">Share</span>, then <span className="font-semibold">Add to Home Screen</span>.</>
+          : <>Install ScopeBook for full-screen access in the field.</>}
       </div>
       {!ios && canPrompt && (
         <button onClick={promptInstall} className="bg-white text-navy text-[12px] font-bold rounded-lg px-3 py-1.5 shrink-0">Install</button>

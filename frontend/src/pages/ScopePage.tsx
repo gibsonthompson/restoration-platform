@@ -177,7 +177,7 @@ export default function ScopePage() {
             <div className="min-w-0">
               <div className="font-bold text-[14px] text-navy">What the scope of work is</div>
               <p className="text-[12px] text-gray-500 leading-relaxed mt-1">
-                A room-by-room list of the work the loss actually requires, with the standard and the reason behind each task. It is what you hand an adjuster to justify the estimate, and what your crew works from. DocuMate drafts it from what you documented in the field, so it only says what you can prove.
+                A room-by-room list of the work the loss actually requires, with the standard and the reason behind each task. It is what you hand an adjuster to justify the estimate, and what your crew works from. ScopeBook drafts it from what you documented in the field, so it only says what you can prove.
               </p>
             </div>
           </div>

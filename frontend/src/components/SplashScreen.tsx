@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Logo } from './Loader';
 
-// Cold-start splash. Covers the screen with the DocuMate logo on a clean field
+// Cold-start splash. Covers the screen with the ScopeBook logo on a clean field
 // until the app shell has mounted, then fades away to reveal the app. Sits above
 // everything (z-100).
 //

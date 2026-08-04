@@ -18,7 +18,7 @@ import { supabase } from '../lib/supabase';
 
   Every image is a <Shot/>: labeled placeholder now, real image the moment you
   pass `src` (drop files in public/site/). The logo is a text <Wordmark/> until a
-  real ScopeBook SVG exists (the old file is a RestoMate wordmark and cannot be
+  real ScopeBook SVG exists (the old file is a ScopeBook wordmark and cannot be
   reused). Design tokens match the app. Signup logic is untouched.
 
   MOBILE: sections use tighter vertical rhythm on phones (py-14) that opens up on

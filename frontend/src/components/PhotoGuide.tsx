@@ -91,7 +91,7 @@ export function PhotoGuide() {
           </div>
 
           <p className="text-[11px] text-gray-400 leading-relaxed">
-            DocuMate stamps every photo with the time and, if enabled, GPS, so the carrier can verify when and where it was taken. Photos are grouped by room in the report automatically.
+            ScopeBook stamps every photo with the time and, if enabled, GPS, so the carrier can verify when and where it was taken. Photos are grouped by room in the report automatically.
           </p>
         </div>
       )}
